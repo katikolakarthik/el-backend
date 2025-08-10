@@ -41,23 +41,35 @@ app.get("/admin/students", studentController.getStudents);
 // Delete Student
 app.delete("/admin/student/:id", studentController.deleteStudent);
 
-// Add Assignment (PDF + Answer Key)
+
+// ================== Assignment Routes ==================
+
+// Add Assignment Module (with sub-assignments)
 app.post(
   "/admin/add-assignment",
-  upload.fields([{ name: "assignmentPdf", maxCount: 1 }]),
+  upload.fields([{ name: "assignmentPdf", maxCount: 100 }]),
   assignmentController.addAssignment
+);
+
+// Get All Assignments (Hierarchy)
+app.get("/admin/assignments", assignmentController.getAssignments);
+
+// Delete whole module by ID
+app.delete("/admin/assignments/:id", assignmentController.deleteAssignmentById);
+
+// Delete all modules
+app.delete("/admin/assignments", assignmentController.deleteAllAssignments);
+
+// Delete specific sub-assignment from a module
+app.delete(
+  "/admin/assignments/:moduleId/sub/:subId",
+  assignmentController.deleteSubAssignment
 );
 
 
 
-// Delete single assignment by ID
-app.delete("/admin/assignments/:id", assignmentController.deleteAssignmentById);
 
-// Delete all assignments
-app.delete("/admin/assignments", assignmentController.deleteAllAssignments);
 
-// Get Assignments
-app.get("/admin/assignments", assignmentController.getAssignments);
 
 // Student Submission
 app.post("/student/submit-assignment", submissionController.submitAssignment);
