@@ -85,3 +85,5 @@ app.get("/student/profile/:studentId", studentController.getStudentProfile);
 //individual student summary
 app.get('/student/:studentId/summary', studentController.getStudentSummary);
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
+exports.module=app;
