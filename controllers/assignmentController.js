@@ -9,11 +9,17 @@ exports.addAssignment = async (req, res) => {
     if (subAssignments) {
       parsedSubAssignments = JSON.parse(subAssignments).map(sub => ({
         subModuleName: sub.subModuleName,
-        patientName: sub.patientName || null,
-        icdCodes: sub.icdCodes ? sub.icdCodes.split(",") : [],
-        cptCodes: sub.cptCodes ? sub.cptCodes.split(",") : [],
-        notes: sub.notes || null,
+        
+        // Always keep student fields empty for admin's uploaded assignment
+        patientName: null,
+        icdCodes: [],
+        cptCodes: [],
+        notes: null,
+
+        // PDF file path if any
         assignmentPdf: sub.assignmentPdfPath || null,
+
+        // Answer key provided by admin
         answerKey: {
           patientName: sub.answerPatientName || null,
           icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
@@ -36,6 +42,11 @@ exports.addAssignment = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+
+
+
 
 // Get all assignments
 exports.getAssignments = async (req, res) => {
