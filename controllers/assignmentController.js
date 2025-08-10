@@ -1,10 +1,10 @@
 const Assignment = require("../models/Assignment");
 
+// Add Assignment (with sub-assignments)
 exports.addAssignment = async (req, res) => {
   try {
     const { moduleName, assignedStudents, subAssignments } = req.body;
 
-    // Parse subAssignments (frontend should send as JSON string if using form-data)
     let parsedSubAssignments = [];
     if (subAssignments) {
       parsedSubAssignments = JSON.parse(subAssignments).map(sub => ({
@@ -19,8 +19,7 @@ exports.addAssignment = async (req, res) => {
           icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
           cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
           notes: sub.answerNotes || null
-        },
-        assignedStudents: sub.assignedStudents ? sub.assignedStudents.split(",") : []
+        }
       }));
     }
 
@@ -38,21 +37,17 @@ exports.addAssignment = async (req, res) => {
   }
 };
 
-
-
+// Get all assignments
 exports.getAssignments = async (req, res) => {
   try {
-    const assignments = await Assignment.find()
-      .populate("assignedStudents")
-      .populate("subAssignments.assignedStudents");
+    const assignments = await Assignment.find().populate("assignedStudents");
     res.json(assignments);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
-
-// Delete whole module
+// Delete entire module
 exports.deleteAssignmentById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -64,7 +59,7 @@ exports.deleteAssignmentById = async (req, res) => {
   }
 };
 
-// Delete specific sub-assignment from module
+// Delete specific sub-assignment
 exports.deleteSubAssignment = async (req, res) => {
   try {
     const { moduleId, subId } = req.params;
@@ -77,20 +72,6 @@ exports.deleteSubAssignment = async (req, res) => {
 
     await assignment.save();
     res.json({ success: true, message: "Sub-assignment deleted successfully" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-
-exports.deleteAllAssignments = async (req, res) => {
-  try {
-    const result = await Assignment.deleteMany({});
-    res.json({
-      success: true,
-      message: "All assignments (modules & sub-assignments) deleted successfully",
-      deletedCount: result.deletedCount
-    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
