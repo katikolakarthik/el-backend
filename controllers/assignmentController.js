@@ -76,3 +76,21 @@ exports.deleteSubAssignment = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+
+exports.deleteAllAssignments = async (req, res) => {
+  try {
+    if (!req.body.confirm) {
+      return res.status(400).json({ error: "Confirmation flag required" });
+    }
+    const result = await Assignment.deleteMany({});
+    res.json({
+      success: true,
+      message: "All assignments deleted successfully",
+      deletedCount: result.deletedCount
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
