@@ -12,15 +12,13 @@ const subAssignmentSchema = new mongoose.Schema({
     icdCodes: [String],
     cptCodes: [String],
     notes: String
-  },
-  assignedStudents: [{ type: mongoose.Schema.Types.ObjectId, ref: "Student" }],
-  assignedDate: { type: Date, default: Date.now }
+  }
 });
 
 const assignmentSchema = new mongoose.Schema({
   moduleName: { type: String, required: true },
   subAssignments: [subAssignmentSchema], // multiple sub-assignments
-  assignedStudents: [{ type: mongoose.Schema.Types.ObjectId, ref: "Student" }], // if assigning whole module
+  assignedStudents: [{ type: mongoose.Schema.Types.ObjectId, ref: "Student" }], // module-level assignment
   assignedDate: { type: Date, default: Date.now }
 });
 
