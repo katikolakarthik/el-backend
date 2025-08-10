@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 5000;
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: "https://el-front-ebon.vercel.app",
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true, // if you need cookies/auth headers
   })
