@@ -9,36 +9,26 @@ exports.addAssignment = async (req, res) => {
     if (subAssignments) {
       parsedSubAssignments = JSON.parse(subAssignments).map((sub, index) => ({
         subModuleName: sub.subModuleName,
-
-        // Student fields stay empty
         patientName: null,
         icdCodes: [],
         cptCodes: [],
         notes: null,
-
-        // Map PDF from uploaded files by index
         assignmentPdf: files[index]
-          ? `/uploads/${files[index].filename}`
+          ? files[index].path || files[index].url || files[index].secure_url || null
           : null,
-
-        // Answer key provided by admin
         answerKey: {
           patientName: sub.answerPatientName || null,
-          icdCodes: sub.answerIcdCodes
-            ? sub.answerIcdCodes.split(",")
-            : [],
-          cptCodes: sub.answerCptCodes
-            ? sub.answerCptCodes.split(",")
-            : [],
-          notes: sub.answerNotes || null
-        }
+          icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
+          cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
+          notes: sub.answerNotes || null,
+        },
       }));
     }
 
     const assignment = new Assignment({
       moduleName,
       subAssignments: parsedSubAssignments,
-      assignedStudents: assignedStudents ? assignedStudents.split(",") : []
+      assignedStudents: assignedStudents ? assignedStudents.split(",") : [],
     });
 
     await assignment.save();
@@ -46,7 +36,7 @@ exports.addAssignment = async (req, res) => {
     res.json({
       success: true,
       message: "Assignment hierarchy saved",
-      assignment
+      assignment,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
