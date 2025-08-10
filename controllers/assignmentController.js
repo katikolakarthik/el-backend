@@ -1,29 +1,35 @@
 const Assignment = require("../models/Assignment");
 
-// Add Assignment (with sub-assignments)
 exports.addAssignment = async (req, res) => {
   try {
     const { moduleName, assignedStudents, subAssignments } = req.body;
+    const files = req.files?.assignmentPdf || []; // all uploaded PDFs
 
     let parsedSubAssignments = [];
     if (subAssignments) {
-      parsedSubAssignments = JSON.parse(subAssignments).map(sub => ({
+      parsedSubAssignments = JSON.parse(subAssignments).map((sub, index) => ({
         subModuleName: sub.subModuleName,
-        
-        // Always keep student fields empty for admin's uploaded assignment
+
+        // Student fields stay empty
         patientName: null,
         icdCodes: [],
         cptCodes: [],
         notes: null,
 
-        // PDF file path if any
-        assignmentPdf: sub.assignmentPdfPath || null,
+        // Map PDF from uploaded files by index
+        assignmentPdf: files[index]
+          ? `/uploads/${files[index].filename}`
+          : null,
 
         // Answer key provided by admin
         answerKey: {
           patientName: sub.answerPatientName || null,
-          icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
-          cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
+          icdCodes: sub.answerIcdCodes
+            ? sub.answerIcdCodes.split(",")
+            : [],
+          cptCodes: sub.answerCptCodes
+            ? sub.answerCptCodes.split(",")
+            : [],
           notes: sub.answerNotes || null
         }
       }));
@@ -37,13 +43,15 @@ exports.addAssignment = async (req, res) => {
 
     await assignment.save();
 
-    res.json({ success: true, message: "Assignment hierarchy saved", assignment });
+    res.json({
+      success: true,
+      message: "Assignment hierarchy saved",
+      assignment
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
-
-
 
 
 
