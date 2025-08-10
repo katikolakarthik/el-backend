@@ -2,81 +2,85 @@ const Assignment = require("../models/Assignment");
 
 exports.addAssignment = async (req, res) => {
   try {
-    console.log("📥 Incoming form data:", req.body);
-    console.log("📂 Uploaded files:", req.files);
+    const { moduleName, assignedStudents, subAssignments } = req.body;
 
-    const {
-      moduleName,
-      subModuleName,
-      assignedStudents,
-      answerPatientName,
-      answerIcdCodes,
-      answerCptCodes,
-      answerNotes
-    } = req.body;
-
-    // PDF path
-    const assignmentPdf = req.files?.assignmentPdf?.[0]?.path || null;
-
-    // Admin only provides answer key
-    const answerKey = {
-      patientName: answerPatientName,
-      icdCodes: answerIcdCodes ? answerIcdCodes.split(",") : [],
-      cptCodes: answerCptCodes ? answerCptCodes.split(",") : [],
-      notes: answerNotes
-    };
+    // Parse subAssignments (frontend should send as JSON string if using form-data)
+    let parsedSubAssignments = [];
+    if (subAssignments) {
+      parsedSubAssignments = JSON.parse(subAssignments).map(sub => ({
+        subModuleName: sub.subModuleName,
+        patientName: sub.patientName || null,
+        icdCodes: sub.icdCodes ? sub.icdCodes.split(",") : [],
+        cptCodes: sub.cptCodes ? sub.cptCodes.split(",") : [],
+        notes: sub.notes || null,
+        assignmentPdf: sub.assignmentPdfPath || null,
+        answerKey: {
+          patientName: sub.answerPatientName || null,
+          icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
+          cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
+          notes: sub.answerNotes || null
+        },
+        assignedStudents: sub.assignedStudents ? sub.assignedStudents.split(",") : []
+      }));
+    }
 
     const assignment = new Assignment({
       moduleName,
-      subModuleName,
-      patientName: null,  // No question data from admin
-      icdCodes: [],
-      cptCodes: [],
-      notes: null,
-      assignmentPdf,
-      answerKey,
+      subAssignments: parsedSubAssignments,
       assignedStudents: assignedStudents ? assignedStudents.split(",") : []
     });
 
     await assignment.save();
-    res.json({ success: true, message: "Assignment added successfully", assignment });
+
+    res.json({ success: true, message: "Assignment hierarchy saved", assignment });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
+
+
 exports.getAssignments = async (req, res) => {
-  const assignments = await Assignment.find().populate("assignedStudents");
-  res.json(assignments);
+  try {
+    const assignments = await Assignment.find()
+      .populate("assignedStudents")
+      .populate("subAssignments.assignedStudents");
+    res.json(assignments);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
 
-
+// Delete whole module
 exports.deleteAssignmentById = async (req, res) => {
   try {
     const { id } = req.params;
-
     const deleted = await Assignment.findByIdAndDelete(id);
-    if (!deleted) {
-      return res.status(404).json({ error: "Assignment not found" });
-    }
-
-    // TODO: Delete PDF file if stored locally or in cloud
-
-    res.json({ success: true, message: "Assignment deleted successfully" });
+    if (!deleted) return res.status(404).json({ error: "Assignment not found" });
+    res.json({ success: true, message: "Module deleted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
-exports.deleteAllAssignments = async (req, res) => {
+// Delete specific sub-assignment from module
+exports.deleteSubAssignment = async (req, res) => {
   try {
-    await Assignment.deleteMany({});
+    const { moduleId, subId } = req.params;
+    const assignment = await Assignment.findById(moduleId);
+    if (!assignment) return res.status(404).json({ error: "Module not found" });
 
-    // TODO: Delete all PDFs if needed
+    assignment.subAssignments = assignment.subAssignments.filter(
+      sub => sub._id.toString() !== subId
+    );
 
-    res.json({ success: true, message: "All assignments deleted successfully" });
+    await assignment.save();
+    res.json({ success: true, message: "Sub-assignment deleted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+
