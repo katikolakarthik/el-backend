@@ -83,4 +83,15 @@ exports.deleteSubAssignment = async (req, res) => {
 };
 
 
-
+exports.deleteAllAssignments = async (req, res) => {
+  try {
+    const result = await Assignment.deleteMany({});
+    res.json({
+      success: true,
+      message: "All assignments (modules & sub-assignments) deleted successfully",
+      deletedCount: result.deletedCount
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
