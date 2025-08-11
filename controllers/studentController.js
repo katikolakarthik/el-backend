@@ -143,23 +143,32 @@ exports.getStudentsWithSummary = async (req, res) => {
     const students = await Student.find();
 
     const result = await Promise.all(students.map(async (student) => {
-      // Find all sub-assignments assigned to this student
-      const assignedAssignments = await Assignment.aggregate([
-        { $unwind: "$subAssignments" },
-        { $match: { "subAssignments.assignedStudents": student._id } },
-        { $project: { _id: "$subAssignments._id" } }
-      ]);
+      // Get all assignments assigned to this student
+      const assignedAssignments = await Assignment.find({
+        assignedStudents: student._id
+      }).lean();
 
-      const assignedAssignmentsCount = assignedAssignments.length;
-      const assignedSubAssignmentIds = assignedAssignments.map(a => a._id);
+      // Flatten all subAssignments from those assignments
+      const assignedSubAssignmentIds = assignedAssignments.flatMap(a =>
+        a.subAssignments.map(sa => sa._id)
+      );
 
-      // Count submissions for these sub-assignments
-      const submissionsCount = await Submission.countDocuments({
-        studentId: student._id,
-        subAssignmentId: { $in: assignedSubAssignmentIds }
-      });
+      const assignedAssignmentsCount = assignedSubAssignmentIds.length;
 
-      const notSubmittedCount = assignedAssignmentsCount - submissionsCount;
+      // Get submissions for this student
+      const submissions = await Submission.find({
+        studentId: student._id
+      }).lean();
+
+      // Extract submitted subAssignmentIds from the submissions
+      const submittedSubAssignmentIds = new Set(
+        submissions.flatMap(s =>
+          s.submittedAnswers.map(ans => ans.subAssignmentId?.toString())
+        )
+      );
+
+      const submittedCount = submittedSubAssignmentIds.size;
+      const notSubmittedCount = assignedAssignmentsCount - submittedCount;
 
       return {
         id: student._id,
@@ -169,8 +178,7 @@ exports.getStudentsWithSummary = async (req, res) => {
         remainingAmount: student.remainingAmount,
         enrolledDate: student.enrolledDate,
         assignedAssignmentsCount,
-        submissionsCount,
-        submittedCount: submissionsCount,
+        submittedCount,
         notSubmittedCount,
         profileImage: student.profileImage
       };
@@ -181,6 +189,9 @@ exports.getStudentsWithSummary = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+
 
 
 
