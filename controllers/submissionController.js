@@ -1,12 +1,23 @@
 const Submission = require("../models/Submission");
 const Assignment = require("../models/Assignment");
 
+// Helper: compare strings ignoring case and extra spaces
+function textMatchIgnoreCase(a = "", b = "") {
+  return a.trim().toLowerCase().replace(/\s+/g, " ") ===
+         b.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// Helper: compare arrays ignoring order, case, and extra spaces
+function arraysMatchIgnoreOrder(a = [], b = []) {
+  if (a.length !== b.length) return false;
+  const sortedA = a.map(v => v.trim().toLowerCase()).sort();
+  const sortedB = b.map(v => v.trim().toLowerCase()).sort();
+  return sortedA.every((val, idx) => val === sortedB[idx]);
+}
+
 exports.submitAssignment = async (req, res) => {
   try {
     const { studentId, assignmentId, submittedAnswers } = req.body;
-    // submittedAnswers = [
-    //   { subAssignmentId, patientName, ageOrDob, icdCodes, cptCodes, notes }
-    // ]
 
     const assignment = await Assignment.findById(assignmentId);
     if (!assignment) return res.status(404).json({ error: "Assignment not found" });
@@ -20,12 +31,23 @@ exports.submitAssignment = async (req, res) => {
 
       let correctCount = 0, wrongCount = 0;
 
-      // Compare each field with the answerKey
-      if (subAssignment.answerKey.patientName?.toLowerCase() === sub.patientName?.toLowerCase()) correctCount++; else wrongCount++;
-      if ((subAssignment.answerKey.ageOrDob || "").toLowerCase() === (sub.ageOrDob || "").toLowerCase()) correctCount++; else wrongCount++;
-      if (JSON.stringify(subAssignment.answerKey.icdCodes || []) === JSON.stringify(sub.icdCodes || [])) correctCount++; else wrongCount++;
-      if (JSON.stringify(subAssignment.answerKey.cptCodes || []) === JSON.stringify(sub.cptCodes || [])) correctCount++; else wrongCount++;
-      if ((subAssignment.answerKey.notes || "").trim().toLowerCase() === (sub.notes || "").trim().toLowerCase()) correctCount++; else wrongCount++;
+      // patientName
+      if (textMatchIgnoreCase(subAssignment.answerKey.patientName, sub.patientName)) correctCount++;
+      else wrongCount++;
+
+      // ageOrDob
+      if (textMatchIgnoreCase(subAssignment.answerKey.ageOrDob, sub.ageOrDob)) correctCount++;
+      else wrongCount++;
+
+      // icdCodes
+      if (arraysMatchIgnoreOrder(subAssignment.answerKey.icdCodes, sub.icdCodes)) correctCount++;
+      else wrongCount++;
+
+      // cptCodes
+      if (arraysMatchIgnoreOrder(subAssignment.answerKey.cptCodes, sub.cptCodes)) correctCount++;
+      else wrongCount++;
+
+      // notes → not graded, but still stored
 
       const progressPercent = Math.round((correctCount / (correctCount + wrongCount)) * 100);
 
