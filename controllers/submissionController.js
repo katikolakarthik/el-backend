@@ -91,7 +91,7 @@ exports.submitAssignment = async (req, res) => {
 
 exports.getStudentAssignmentSummary = async (req, res) => {
   try {
-    const { studentId, assignmentId } = req.query;
+    const { studentId, assignmentId } = req.body; // <-- from body now
     if (!studentId || !assignmentId) {
       return res.status(400).json({ error: "Missing studentId or assignmentId" });
     }
