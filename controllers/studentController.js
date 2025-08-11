@@ -148,27 +148,41 @@ exports.getStudentsWithSummary = async (req, res) => {
         assignedStudents: student._id
       }).lean();
 
-      // Flatten all subAssignments from those assignments
-      const assignedSubAssignmentIds = assignedAssignments.flatMap(a =>
-        a.subAssignments.map(sa => sa._id)
+      // Flatten subAssignments with assignment details
+      const allAssignedSubAssignments = assignedAssignments.flatMap(a =>
+        (a.subAssignments || []).map(sa => ({
+          _id: sa._id.toString(),
+          subModuleName: sa.subModuleName,
+          assignmentId: a._id.toString(),
+          moduleName: a.moduleName
+        }))
       );
 
-      const assignedAssignmentsCount = assignedSubAssignmentIds.length;
+      const assignedAssignmentsCount = allAssignedSubAssignments.length;
 
       // Get submissions for this student
       const submissions = await Submission.find({
         studentId: student._id
       }).lean();
 
-      // Extract submitted subAssignmentIds from the submissions
+      // Extract submitted subAssignmentIds
       const submittedSubAssignmentIds = new Set(
         submissions.flatMap(s =>
-          s.submittedAnswers.map(ans => ans.subAssignmentId?.toString())
+          (s.submittedAnswers || []).map(ans => ans.subAssignmentId?.toString())
         )
       );
 
-      const submittedCount = submittedSubAssignmentIds.size;
-      const notSubmittedCount = assignedAssignmentsCount - submittedCount;
+      // Build submitted & not submitted lists
+      const submittedList = allAssignedSubAssignments.filter(sa =>
+        submittedSubAssignmentIds.has(sa._id)
+      );
+
+      const notSubmittedList = allAssignedSubAssignments.filter(sa =>
+        !submittedSubAssignmentIds.has(sa._id)
+      );
+
+      const submittedCount = submittedList.length;
+      const notSubmittedCount = notSubmittedList.length;
 
       return {
         id: student._id,
@@ -180,6 +194,8 @@ exports.getStudentsWithSummary = async (req, res) => {
         assignedAssignmentsCount,
         submittedCount,
         notSubmittedCount,
+        submittedAssignments: submittedList,
+        notSubmittedAssignments: notSubmittedList,
         profileImage: student.profileImage
       };
     }));
@@ -189,8 +205,6 @@ exports.getStudentsWithSummary = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
-
 
 
 
