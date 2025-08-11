@@ -143,22 +143,22 @@ exports.getStudentsWithSummary = async (req, res) => {
     const students = await Student.find();
 
     const result = await Promise.all(students.map(async (student) => {
-      // Get all assignments assigned to this student
-      const assignedAssignments = await Assignment.find({
-        assignedStudents: student._id
-      }).select('_id');
+      // Find all sub-assignments assigned to this student
+      const assignedAssignments = await Assignment.aggregate([
+        { $unwind: "$subAssignments" },
+        { $match: { "subAssignments.assignedStudents": student._id } },
+        { $project: { _id: "$subAssignments._id" } }
+      ]);
 
       const assignedAssignmentsCount = assignedAssignments.length;
+      const assignedSubAssignmentIds = assignedAssignments.map(a => a._id);
 
-      const assignedAssignmentIds = assignedAssignments.map(a => a._id);
-
-      // Count submissions by this student only for assigned assignments
+      // Count submissions for these sub-assignments
       const submissionsCount = await Submission.countDocuments({
         studentId: student._id,
-        assignmentId: { $in: assignedAssignmentIds }
+        subAssignmentId: { $in: assignedSubAssignmentIds }
       });
 
-      // Calculate not submitted assignments count
       const notSubmittedCount = assignedAssignmentsCount - submissionsCount;
 
       return {
@@ -181,6 +181,7 @@ exports.getStudentsWithSummary = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 
 
