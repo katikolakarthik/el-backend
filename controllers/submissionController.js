@@ -85,3 +85,57 @@ exports.submitAssignment = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+exports.getStudentAssignmentSummary = async (req, res) => {
+  try {
+    const { studentId, assignmentId } = req.query;
+    if (!studentId || !assignmentId) {
+      return res.status(400).json({ error: "Missing studentId or assignmentId" });
+    }
+
+    // Find the latest submission by student for this assignment
+    const submission = await Submission.findOne({ studentId, assignmentId })
+      .sort({ submissionDate: -1 });
+
+    if (!submission) {
+      return res.status(404).json({ error: "No submission found for this student and assignment" });
+    }
+
+    // Get assignment details to know subAssignments info
+    const assignment = await Assignment.findById(assignmentId);
+    if (!assignment) {
+      return res.status(404).json({ error: "Assignment (main module) not found" });
+    }
+
+    // Prepare response with per sub-assignment summary and overall stats
+    // Map through assignment.subAssignments and match with submission.submittedAnswers to ensure all sub modules shown
+    const subModulesSummary = assignment.subAssignments.map(subAssign => {
+      // Find the corresponding submitted answer for this subAssignment
+      const submittedAnswer = submission.submittedAnswers.find(sa =>
+        sa.subAssignmentId.toString() === subAssign._id.toString()
+      );
+
+      return {
+        subAssignmentId: subAssign._id,
+        title: subAssign.title || "", // assuming subAssignments have title or name field
+        correctCount: submittedAnswer?.correctCount || 0,
+        wrongCount: submittedAnswer?.wrongCount || 0,
+        progressPercent: submittedAnswer?.progressPercent || 0
+      };
+    });
+
+    const response = {
+      studentId,
+      assignmentId,
+      totalCorrect: submission.totalCorrect,
+      totalWrong: submission.totalWrong,
+      overallProgress: submission.overallProgress,
+      subModulesSummary
+    };
+
+    return res.json(response);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
