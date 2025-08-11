@@ -3,13 +3,14 @@ const Assignment = require("../models/Assignment");
 exports.addAssignment = async (req, res) => {
   try {
     const { moduleName, assignedStudents, subAssignments } = req.body;
-    const files = req.files?.assignmentPdf || []; // all uploaded PDFs
+    const files = req.files?.assignmentPdf || [];
 
     let parsedSubAssignments = [];
     if (subAssignments) {
       parsedSubAssignments = JSON.parse(subAssignments).map((sub, index) => ({
         subModuleName: sub.subModuleName,
         patientName: null,
+        ageOrDob: null, // <-- new field
         icdCodes: [],
         cptCodes: [],
         notes: null,
@@ -18,6 +19,7 @@ exports.addAssignment = async (req, res) => {
           : null,
         answerKey: {
           patientName: sub.answerPatientName || null,
+          ageOrDob: sub.answerAgeOrDob || null, // <-- new field
           icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
           cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
           notes: sub.answerNotes || null,
