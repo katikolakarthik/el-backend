@@ -150,12 +150,14 @@ exports.getStudentsWithSummary = async (req, res) => {
 
       // Flatten subAssignments with assignment details
       const allAssignedSubAssignments = assignedAssignments.flatMap(a =>
-        (a.subAssignments || []).map(sa => ({
-          _id: sa._id.toString(),
-          subModuleName: sa.subModuleName,
-          assignmentId: a._id.toString(),
-          moduleName: a.moduleName
-        }))
+        Array.isArray(a.subAssignments)
+          ? a.subAssignments.map(sa => ({
+              _id: sa._id.toString(),
+              subModuleName: sa.subModuleName,
+              assignmentId: a._id.toString(),
+              moduleName: a.moduleName
+            }))
+          : []
       );
 
       const assignedAssignmentsCount = allAssignedSubAssignments.length;
@@ -165,10 +167,12 @@ exports.getStudentsWithSummary = async (req, res) => {
         studentId: student._id
       }).lean();
 
-      // Extract submitted subAssignmentIds
+      // Extract submitted subAssignmentIds safely
       const submittedSubAssignmentIds = new Set(
         submissions.flatMap(s =>
-          (s.submittedAnswers || []).map(ans => ans.subAssignmentId?.toString())
+          Array.isArray(s.submittedAnswers)
+            ? s.submittedAnswers.map(ans => ans.subAssignmentId?.toString())
+            : []
         )
       );
 
@@ -205,7 +209,6 @@ exports.getStudentsWithSummary = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 
 
 
