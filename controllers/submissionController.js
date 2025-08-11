@@ -87,6 +87,8 @@ exports.submitAssignment = async (req, res) => {
 };
 
 
+
+
 exports.getStudentAssignmentSummary = async (req, res) => {
   try {
     const { studentId, assignmentId } = req.query;
@@ -94,44 +96,53 @@ exports.getStudentAssignmentSummary = async (req, res) => {
       return res.status(400).json({ error: "Missing studentId or assignmentId" });
     }
 
-    // Find the latest submission by student for this assignment
-    const submission = await Submission.findOne({ studentId, assignmentId })
-      .sort({ submissionDate: -1 });
-
+    // Find latest submission of student for the assignment
+    const submission = await Submission.findOne({ studentId, assignmentId }).sort({ submissionDate: -1 });
     if (!submission) {
       return res.status(404).json({ error: "No submission found for this student and assignment" });
     }
 
-    // Get assignment details to know subAssignments info
+    // Load the assignment (main module) to get subAssignments info
     const assignment = await Assignment.findById(assignmentId);
     if (!assignment) {
       return res.status(404).json({ error: "Assignment (main module) not found" });
     }
 
-    // Prepare response with per sub-assignment summary and overall stats
-    // Map through assignment.subAssignments and match with submission.submittedAnswers to ensure all sub modules shown
+    // Prepare array of sub-module summaries including student entered values
     const subModulesSummary = assignment.subAssignments.map(subAssign => {
-      // Find the corresponding submitted answer for this subAssignment
+      // Find student's submitted answer for this subAssignment
       const submittedAnswer = submission.submittedAnswers.find(sa =>
         sa.subAssignmentId.toString() === subAssign._id.toString()
       );
 
       return {
         subAssignmentId: subAssign._id,
-        title: subAssign.title || "", // assuming subAssignments have title or name field
+        subModuleName: subAssign.subModuleName || subAssign.title || "",
+        // Student's entered values:
+        enteredValues: submittedAnswer
+          ? {
+              patientName: submittedAnswer.patientName,
+              ageOrDob: submittedAnswer.ageOrDob,
+              icdCodes: submittedAnswer.icdCodes,
+              cptCodes: submittedAnswer.cptCodes,
+              notes: submittedAnswer.notes,
+            }
+          : null,
+        // Grading info:
         correctCount: submittedAnswer?.correctCount || 0,
         wrongCount: submittedAnswer?.wrongCount || 0,
-        progressPercent: submittedAnswer?.progressPercent || 0
+        progressPercent: submittedAnswer?.progressPercent || 0,
       };
     });
 
+    // Build response
     const response = {
       studentId,
       assignmentId,
       totalCorrect: submission.totalCorrect,
       totalWrong: submission.totalWrong,
       overallProgress: submission.overallProgress,
-      subModulesSummary
+      subModulesSummary,
     };
 
     return res.json(response);
