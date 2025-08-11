@@ -113,6 +113,10 @@ app.get("/admin/studentslist", studentController.getRecentStudents);
 
 app.get("/admin/recentassignments", studentController.getRecentAssignments);
 
+app.get("/student/submithistory", submissionController.getStudentAssignmentSummary);
+
+
+
 
 
 //individual student summary
