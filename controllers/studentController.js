@@ -260,25 +260,76 @@ exports.getStudentSubmissions = async (req, res) => {
 };
 
 
+
+
 exports.getStudentProfile = async (req, res) => {
   try {
     const { studentId } = req.params;
+    
+    // Get student basic info
     const student = await Student.findById(studentId);
     if (!student) return res.status(404).json({ error: "Student not found" });
 
+    // Get assignments assigned to this student
+    const assignments = await Assignment.find({ assignedStudents: studentId });
+    
+    // Get all submissions by this student
+    const submissions = await Submission.find({ studentId })
+      .populate('assignmentId')
+      .sort({ submissionDate: -1 });
+
+    // Calculate statistics
+    const totalAssignments = assignments.length;
+    const completedSubmissions = submissions.filter(sub => sub.overallProgress === 100).length;
+    
+    // Calculate average score
+    let averageScore = 0;
+    if (submissions.length > 0) {
+      const totalScores = submissions.reduce((sum, sub) => {
+        return sum + (sub.totalCorrect / (sub.totalCorrect + sub.totalWrong)) * 100;
+      }, 0);
+      averageScore = totalScores / submissions.length;
+    }
+
+    // Get pending assignments (assigned but not submitted or not 100% complete)
+    const pendingAssignments = totalAssignments - completedSubmissions;
+
+    // Prepare recent submissions data
+    const recentSubmissions = submissions.slice(0, 5).map(sub => ({
+      assignmentName: sub.assignmentId?.moduleName || 'Unknown',
+      submissionDate: sub.submissionDate,
+      progress: sub.overallProgress,
+      score: sub.totalCorrect / (sub.totalCorrect + sub.totalWrong) * 100
+    }));
+
     res.json({
+      // Basic student info
       id: student._id,
       name: student.name,
       courseName: student.courseName,
       paidAmount: student.paidAmount,
       remainingAmount: student.remainingAmount,
       enrolledDate: student.enrolledDate,
-      profileImage: student.profileImage
+      profileImage: student.profileImage,
+      
+      // Assignment statistics
+      totalAssignments,
+      completedSubmissions,
+      averageScore: Math.round(averageScore),
+      pendingAssignments,
+      
+      // Progress data
+      courseProgress: Math.round((completedSubmissions / Math.max(totalAssignments, 1)) * 100),
+      assignmentCompletion: `${completedSubmissions}/${totalAssignments}`,
+      
+      // Recent submissions
+      recentSubmissions: recentSubmissions.length > 0 ? recentSubmissions : null
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 
 
