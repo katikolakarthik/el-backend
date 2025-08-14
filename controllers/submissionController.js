@@ -1,11 +1,7 @@
 const Submission = require("../models/Submission");
 const Assignment = require("../models/Assignment");
 
-// Helper: compare strings ignoring case and extra spaces
-function textMatchIgnoreCase(a = "", b = "") {
-  return a.trim().toLowerCase().replace(/\s+/g, " ") ===
-         b.trim().toLowerCase().replace(/\s+/g, " ");
-}
+
 
 // Helper: compare arrays ignoring order, case, and extra spaces
 function arraysMatchIgnoreOrder(a = [], b = []) {
@@ -13,6 +9,12 @@ function arraysMatchIgnoreOrder(a = [], b = []) {
   const sortedA = a.map(v => v.trim().toLowerCase()).sort();
   const sortedB = b.map(v => v.trim().toLowerCase()).sort();
   return sortedA.every((val, idx) => val === sortedB[idx]);
+}
+
+// Helper: compare strings ignoring case and extra spaces
+function textMatchIgnoreCase(a = "", b = "") {
+  return a.trim().toLowerCase().replace(/\s+/g, " ") ===
+         b.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 exports.submitAssignment = async (req, res) => {
@@ -24,20 +26,6 @@ exports.submitAssignment = async (req, res) => {
 
     let totalCorrect = 0, totalWrong = 0;
     let processedAnswers = [];
-
-    // Helper: grade dynamic questions
-    const gradeDynamic = (questions, submittedQs) => {
-      let correct = 0, wrong = 0;
-      questions.forEach((q, idx) => {
-        const submitted = submittedQs[idx];
-        if (submitted && textMatchIgnoreCase(q.answer, submitted.answer)) {
-          correct++;
-        } else {
-          wrong++;
-        }
-      });
-      return { correct, wrong };
-    };
 
     // Loop through submitted answers
     submittedAnswers.forEach(sub => {
@@ -52,11 +40,30 @@ exports.submitAssignment = async (req, res) => {
       }
       if (!target) return;
 
+      let gradedDynamicQuestions = [];
+
       if (target.dynamicQuestions?.length) {
         // Grade dynamic questions (MCQ or text)
-        const { correct, wrong } = gradeDynamic(target.dynamicQuestions, sub.dynamicQuestions || []);
-        correctCount += correct;
-        wrongCount += wrong;
+        target.dynamicQuestions.forEach((q) => {
+          const submittedQ = (sub.dynamicQuestions || []).find(
+            sq => textMatchIgnoreCase(sq.questionText, q.questionText)
+          );
+
+          const submittedAnswer = submittedQ?.submittedAnswer || "";
+          const isCorrect = textMatchIgnoreCase(q.answer, submittedAnswer);
+
+          if (isCorrect) correctCount++;
+          else wrongCount++;
+
+          gradedDynamicQuestions.push({
+            questionText: q.questionText,
+            type: q.type || "dynamic",
+            options: q.options || [],
+            correctAnswer: q.answer,
+            submittedAnswer,
+            isCorrect
+          });
+        });
       } else if (target.answerKey) {
         // Grade predefined fields
         if (textMatchIgnoreCase(target.answerKey.patientName, sub.patientName)) correctCount++;
@@ -83,7 +90,7 @@ exports.submitAssignment = async (req, res) => {
         icdCodes: sub.icdCodes || [],
         cptCodes: sub.cptCodes || [],
         notes: sub.notes || null,
-        dynamicQuestions: sub.dynamicQuestions || [],
+        dynamicQuestions: gradedDynamicQuestions,
         correctCount,
         wrongCount,
         progressPercent
@@ -112,8 +119,6 @@ exports.submitAssignment = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
-
 
 exports.getStudentAssignmentSummary = async (req, res) => {
   try {
