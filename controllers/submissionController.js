@@ -3,20 +3,21 @@ const Assignment = require("../models/Assignment");
 
 
 
+// Helper: compare strings ignoring case and extra spaces
+function textMatchIgnoreCase(a, b) {
+  const strA = (a ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+  const strB = (b ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+  return strA === strB;
+}
+
 // Helper: compare arrays ignoring order, case, and extra spaces
 function arraysMatchIgnoreOrder(a = [], b = []) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
   if (a.length !== b.length) return false;
-  const sortedA = a.map(v => v.trim().toLowerCase()).sort();
-  const sortedB = b.map(v => v.trim().toLowerCase()).sort();
+  const sortedA = a.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
+  const sortedB = b.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
   return sortedA.every((val, idx) => val === sortedB[idx]);
 }
-
-// Helper: compare strings ignoring case and extra spaces
-function textMatchIgnoreCase(a = "", b = "") {
-  return a.trim().toLowerCase().replace(/\s+/g, " ") ===
-         b.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
 exports.submitAssignment = async (req, res) => {
   try {
     const { studentId, assignmentId, submittedAnswers } = req.body;
