@@ -265,45 +265,46 @@ exports.getStudentSubmissions = async (req, res) => {
 exports.getStudentProfile = async (req, res) => {
   try {
     const { studentId } = req.params;
-    
-    // Get student basic info
+
+    // Step 1: Get student info
     const student = await Student.findById(studentId);
     if (!student) return res.status(404).json({ error: "Student not found" });
 
-    // Get assignments assigned to this student
+    // Step 2: Get all assignments assigned to this student
     const assignments = await Assignment.find({ assignedStudents: studentId });
-    
-    // Get all submissions by this student
+
+    // Step 3: Get all submissions (populate only parent assignment name)
     const submissions = await Submission.find({ studentId })
-      .populate('assignmentId')
+      .populate({
+        path: "assignmentId",
+        select: "moduleName assignedDate" // only parent assignment info
+      })
       .sort({ submissionDate: -1 });
 
-    // Calculate statistics
+    // Step 4: Calculate stats
     const totalAssignments = assignments.length;
-    const completedSubmissions = submissions.filter(sub => sub.overallProgress === 100).length;
-    
-    // Calculate average score
+    const completedCount = submissions.length;
+    const pendingCount = totalAssignments - completedCount;
+
+    // Average score
     let averageScore = 0;
     if (submissions.length > 0) {
-      const totalScores = submissions.reduce((sum, sub) => {
-        return sum + (sub.totalCorrect / (sub.totalCorrect + sub.totalWrong)) * 100;
-      }, 0);
-      averageScore = totalScores / submissions.length;
+      const totalProgress = submissions.reduce((sum, s) => sum + (s.overallProgress || 0), 0);
+      averageScore = (totalProgress / submissions.length).toFixed(2);
     }
 
-    // Get pending assignments (assigned but not submitted or not 100% complete)
-    const pendingAssignments = totalAssignments - completedSubmissions;
-
-    // Prepare recent submissions data
+    // Step 5: Prepare recent submissions list
     const recentSubmissions = submissions.slice(0, 5).map(sub => ({
-      assignmentName: sub.assignmentId?.moduleName || 'Unknown',
+      assignmentId: sub.assignmentId?._id || null,
+      moduleName: sub.assignmentId?.moduleName || "Unknown",
       submissionDate: sub.submissionDate,
-      progress: sub.overallProgress,
-      score: sub.totalCorrect / (sub.totalCorrect + sub.totalWrong) * 100
+      overallProgress: sub.overallProgress || 0,
+      totalCorrect: sub.totalCorrect || 0,
+      totalWrong: sub.totalWrong || 0
     }));
 
+    // Step 6: Send response
     res.json({
-      // Basic student info
       id: student._id,
       name: student.name,
       courseName: student.courseName,
@@ -311,24 +312,29 @@ exports.getStudentProfile = async (req, res) => {
       remainingAmount: student.remainingAmount,
       enrolledDate: student.enrolledDate,
       profileImage: student.profileImage,
-      
-      // Assignment statistics
+
+      // Dashboard stats
       totalAssignments,
-      completedSubmissions,
-      averageScore: Math.round(averageScore),
-      pendingAssignments,
-      
-      // Progress data
-      courseProgress: Math.round((completedSubmissions / Math.max(totalAssignments, 1)) * 100),
-      assignmentCompletion: `${completedSubmissions}/${totalAssignments}`,
-      
-      // Recent submissions
-      recentSubmissions: recentSubmissions.length > 0 ? recentSubmissions : null
+      completedCount,
+      pendingCount,
+      averageScore: Number(averageScore),
+
+      courseProgress: averageScore, // you can adjust if course progress logic is different
+      assignmentCompletion: `${completedCount}/${totalAssignments}`,
+
+      // Only parent assignment info in recent submissions
+      recentSubmissions
     });
+
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 };
+
+
+
+
 
 
 
