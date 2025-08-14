@@ -20,6 +20,14 @@ const subAssignmentSchema = new mongoose.Schema({
 const assignmentSchema = new mongoose.Schema({
   moduleName: { type: String, required: true },
   subAssignments: [subAssignmentSchema],
+  assignmentPdf: String, // <-- for single assignment
+  answerKey: {           // <-- for single assignment
+    patientName: String,
+    ageOrDob: String,
+    icdCodes: [String],
+    cptCodes: [String],
+    notes: String,
+  },
   assignedStudents: [{ type: mongoose.Schema.Types.ObjectId, ref: "Student" }],
   assignedDate: { type: Date, default: Date.now }
 });
