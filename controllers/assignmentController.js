@@ -3,20 +3,32 @@ const Assignment = require("../models/Assignment");
 
 exports.addAssignment = async (req, res) => {
   try {
-    const { moduleName, assignedStudents, subAssignments } = req.body;
+    const { moduleName, assignedStudents, subAssignments, dynamicQuestions } = req.body;
     const files = req.files?.assignmentPdf || [];
 
-    let parsedSubAssignments = [];
     let assignmentData = {
       moduleName,
-      assignedStudents: assignedStudents ? assignedStudents.split(",") : [],
+      assignedStudents: assignedStudents ? assignedStudents.split(",") : []
     };
 
+    // Handle dynamic questions at assignment level
+    if (dynamicQuestions) {
+      const parsedDynamic = JSON.parse(dynamicQuestions);
+      assignmentData.dynamicQuestions = parsedDynamic.map(q => ({
+        questionText: q.questionText,
+        answer: q.answer
+      }));
+      assignmentData.dynamicAnswerKey = parsedDynamic.map(q => ({
+        questionText: q.questionText,
+        answer: q.answer
+      }));
+    }
+
+    // Handle predefined or subAssignments
     if (subAssignments) {
       const parsed = JSON.parse(subAssignments);
 
-      if (parsed.length === 1) {
-        // Single assignment case — store directly at parent level
+      if (parsed.length === 1 && !parsed[0].isDynamic) {
         const single = parsed[0];
         assignmentData.assignmentPdf = files[0]
           ? files[0].path || files[0].url || files[0].secure_url || null
@@ -26,33 +38,46 @@ exports.addAssignment = async (req, res) => {
           ageOrDob: single.answerAgeOrDob || null,
           icdCodes: single.answerIcdCodes ? single.answerIcdCodes.split(",") : [],
           cptCodes: single.answerCptCodes ? single.answerCptCodes.split(",") : [],
-          notes: single.answerNotes || null,
+          notes: single.answerNotes || null
         };
       } else {
-        // Multiple subassignments case
-        parsedSubAssignments = parsed.map((sub, index) => ({
-          subModuleName:
-            sub.subModuleName && sub.subModuleName.trim() !== ""
-              ? sub.subModuleName
-              : `${moduleName} - Sub ${index + 1}`,
-          patientName: null,
-          ageOrDob: null,
-          icdCodes: [],
-          cptCodes: [],
-          notes: null,
-          assignmentPdf: files[index]
-            ? files[index].path || files[index].url || files[index].secure_url || null
-            : null,
-          answerKey: {
-            patientName: sub.answerPatientName || null,
-            ageOrDob: sub.answerAgeOrDob || null,
-            icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
-            cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
-            notes: sub.answerNotes || null,
-          },
-        }));
-
-        assignmentData.subAssignments = parsedSubAssignments;
+        assignmentData.subAssignments = parsed.map((sub, index) => {
+          if (sub.isDynamic) {
+            return {
+              subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
+              dynamicQuestions: sub.questions.map(q => ({
+                questionText: q.questionText,
+                answer: q.answer
+              })),
+              dynamicAnswerKey: sub.questions.map(q => ({
+                questionText: q.questionText,
+                answer: q.answer
+              })),
+              assignmentPdf: files[index]
+                ? files[index].path || files[index].url || files[index].secure_url || null
+                : null
+            };
+          } else {
+            return {
+              subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
+              patientName: null,
+              ageOrDob: null,
+              icdCodes: [],
+              cptCodes: [],
+              notes: null,
+              assignmentPdf: files[index]
+                ? files[index].path || files[index].url || files[index].secure_url || null
+                : null,
+              answerKey: {
+                patientName: sub.answerPatientName || null,
+                ageOrDob: sub.answerAgeOrDob || null,
+                icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
+                cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
+                notes: sub.answerNotes || null
+              }
+            };
+          }
+        });
       }
     }
 
@@ -61,15 +86,13 @@ exports.addAssignment = async (req, res) => {
 
     res.json({
       success: true,
-      message: "Assignment hierarchy saved",
-      assignment,
+      message: "Assignment saved with predefined and/or dynamic questions",
+      assignment
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
-
-
 
 
 
