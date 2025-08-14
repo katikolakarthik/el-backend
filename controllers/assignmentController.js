@@ -14,7 +14,23 @@ exports.addAssignment = async (req, res) => {
     if (subAssignments) {
       const parsed = JSON.parse(subAssignments);
 
-      // Case: Single subAssignment → store at parent level
+      // Helper: Format dynamic questions (MCQ or text)
+      const formatDynamic = (questions) => questions.map(q => ({
+        questionText: q.questionText,
+        options: q.options || [],
+        answer: q.answer
+      }));
+
+      // Helper: Format predefined answers
+      const formatPredefined = (sub) => ({
+        patientName: sub.answerPatientName || null,
+        ageOrDob: sub.answerAgeOrDob || null,
+        icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
+        cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
+        notes: sub.answerNotes || null
+      });
+
+      // Single assignment → store at parent level
       if (parsed.length === 1) {
         const single = parsed[0];
         assignmentData.assignmentPdf = files[0]
@@ -22,62 +38,29 @@ exports.addAssignment = async (req, res) => {
           : null;
 
         if (single.isDynamic) {
-          // Dynamic stored at parent
-          assignmentData.dynamicQuestions = single.questions.map(q => ({
-            questionText: q.questionText,
-            answer: q.answer
-          }));
-          assignmentData.dynamicAnswerKey = single.questions.map(q => ({
-            questionText: q.questionText,
-            answer: q.answer
-          }));
+          assignmentData.dynamicQuestions = formatDynamic(single.questions);
         } else {
-          // Predefined stored at parent
-          assignmentData.answerKey = {
-            patientName: single.answerPatientName || null,
-            ageOrDob: single.answerAgeOrDob || null,
-            icdCodes: single.answerIcdCodes ? single.answerIcdCodes.split(",") : [],
-            cptCodes: single.answerCptCodes ? single.answerCptCodes.split(",") : [],
-            notes: single.answerNotes || null
-          };
+          assignmentData.answerKey = formatPredefined(single);
         }
-      } 
-      // Case: Multiple subAssignments → store nested
+      }
+      // Multiple sub-assignments
       else {
         assignmentData.subAssignments = parsed.map((sub, index) => {
+          const pdfPath = files[index]
+            ? files[index].path || files[index].url || files[index].secure_url || null
+            : null;
+
           if (sub.isDynamic) {
             return {
               subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
-              dynamicQuestions: sub.questions.map(q => ({
-                questionText: q.questionText,
-                answer: q.answer
-              })),
-              dynamicAnswerKey: sub.questions.map(q => ({
-                questionText: q.questionText,
-                answer: q.answer
-              })),
-              assignmentPdf: files[index]
-                ? files[index].path || files[index].url || files[index].secure_url || null
-                : null
+              dynamicQuestions: formatDynamic(sub.questions),
+              assignmentPdf: pdfPath
             };
           } else {
             return {
               subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
-              patientName: null,
-              ageOrDob: null,
-              icdCodes: [],
-              cptCodes: [],
-              notes: null,
-              assignmentPdf: files[index]
-                ? files[index].path || files[index].url || files[index].secure_url || null
-                : null,
-              answerKey: {
-                patientName: sub.answerPatientName || null,
-                ageOrDob: sub.answerAgeOrDob || null,
-                icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
-                cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
-                notes: sub.answerNotes || null
-              }
+              assignmentPdf: pdfPath,
+              answerKey: formatPredefined(sub)
             };
           }
         });
@@ -89,13 +72,15 @@ exports.addAssignment = async (req, res) => {
 
     res.json({
       success: true,
-      message: "Assignment saved with predefined and/or dynamic questions",
+      message: "Assignment saved successfully (supports predefined, text, and MCQ dynamic questions)",
       assignment
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
+
 
 // Get all assignments
 
