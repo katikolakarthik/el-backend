@@ -25,49 +25,72 @@ exports.submitAssignment = async (req, res) => {
     let totalCorrect = 0, totalWrong = 0;
     let processedAnswers = [];
 
+    // Helper: grade dynamic questions
+    const gradeDynamic = (questions, submittedQs) => {
+      let correct = 0, wrong = 0;
+      questions.forEach((q, idx) => {
+        const submitted = submittedQs[idx];
+        if (submitted && textMatchIgnoreCase(q.answer, submitted.answer)) {
+          correct++;
+        } else {
+          wrong++;
+        }
+      });
+      return { correct, wrong };
+    };
+
+    // Loop through submitted answers
     submittedAnswers.forEach(sub => {
-      const subAssignment = assignment.subAssignments.id(sub.subAssignmentId);
-      if (!subAssignment) return;
-
       let correctCount = 0, wrongCount = 0;
+      let target;
 
-      // patientName
-      if (textMatchIgnoreCase(subAssignment.answerKey.patientName, sub.patientName)) correctCount++;
-      else wrongCount++;
+      // If subAssignmentId exists → grade sub-assignment
+      if (sub.subAssignmentId) {
+        target = assignment.subAssignments.id(sub.subAssignmentId);
+      } else {
+        target = assignment; // grading parent-level
+      }
+      if (!target) return;
 
-      // ageOrDob
-      if (textMatchIgnoreCase(subAssignment.answerKey.ageOrDob, sub.ageOrDob)) correctCount++;
-      else wrongCount++;
+      if (target.dynamicQuestions?.length) {
+        // Grade dynamic questions (MCQ or text)
+        const { correct, wrong } = gradeDynamic(target.dynamicQuestions, sub.dynamicQuestions || []);
+        correctCount += correct;
+        wrongCount += wrong;
+      } else if (target.answerKey) {
+        // Grade predefined fields
+        if (textMatchIgnoreCase(target.answerKey.patientName, sub.patientName)) correctCount++;
+        else wrongCount++;
 
-      // icdCodes
-      if (arraysMatchIgnoreOrder(subAssignment.answerKey.icdCodes, sub.icdCodes)) correctCount++;
-      else wrongCount++;
+        if (textMatchIgnoreCase(target.answerKey.ageOrDob, sub.ageOrDob)) correctCount++;
+        else wrongCount++;
 
-      // cptCodes
-      if (arraysMatchIgnoreOrder(subAssignment.answerKey.cptCodes, sub.cptCodes)) correctCount++;
-      else wrongCount++;
+        if (arraysMatchIgnoreOrder(target.answerKey.icdCodes, sub.icdCodes)) correctCount++;
+        else wrongCount++;
 
-      // notes → not graded, but still stored
+        if (arraysMatchIgnoreOrder(target.answerKey.cptCodes, sub.cptCodes)) correctCount++;
+        else wrongCount++;
+      }
 
-      const progressPercent = Math.round((correctCount / (correctCount + wrongCount)) * 100);
-
+      const progressPercent = Math.round((correctCount / (correctCount + wrongCount)) * 100) || 0;
       totalCorrect += correctCount;
       totalWrong += wrongCount;
 
       processedAnswers.push({
-        subAssignmentId: sub.subAssignmentId,
-        patientName: sub.patientName,
-        ageOrDob: sub.ageOrDob,
-        icdCodes: sub.icdCodes,
-        cptCodes: sub.cptCodes,
-        notes: sub.notes,
+        subAssignmentId: sub.subAssignmentId || null,
+        patientName: sub.patientName || null,
+        ageOrDob: sub.ageOrDob || null,
+        icdCodes: sub.icdCodes || [],
+        cptCodes: sub.cptCodes || [],
+        notes: sub.notes || null,
+        dynamicQuestions: sub.dynamicQuestions || [],
         correctCount,
         wrongCount,
         progressPercent
       });
     });
 
-    const overallProgress = Math.round((totalCorrect / (totalCorrect + totalWrong)) * 100);
+    const overallProgress = Math.round((totalCorrect / (totalCorrect + totalWrong)) * 100) || 0;
 
     const submission = new Submission({
       studentId,
@@ -80,7 +103,11 @@ exports.submitAssignment = async (req, res) => {
 
     await submission.save();
 
-    res.json({ success: true, message: "Assignment submitted", submission });
+    res.json({
+      success: true,
+      message: "Assignment submitted",
+      submission
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -88,37 +115,31 @@ exports.submitAssignment = async (req, res) => {
 
 
 
-
 exports.getStudentAssignmentSummary = async (req, res) => {
   try {
-    const { studentId, assignmentId } = req.body; // <-- from body now
+    const { studentId, assignmentId } = req.body;
     if (!studentId || !assignmentId) {
       return res.status(400).json({ error: "Missing studentId or assignmentId" });
     }
 
-    // Find latest submission of student for the assignment
     const submission = await Submission.findOne({ studentId, assignmentId }).sort({ submissionDate: -1 });
     if (!submission) {
       return res.status(404).json({ error: "No submission found for this student and assignment" });
     }
 
-    // Load the assignment (main module) to get subAssignments info
     const assignment = await Assignment.findById(assignmentId);
     if (!assignment) {
-      return res.status(404).json({ error: "Assignment (main module) not found" });
+      return res.status(404).json({ error: "Assignment not found" });
     }
 
-    // Prepare array of sub-module summaries including student entered values
     const subModulesSummary = assignment.subAssignments.map(subAssign => {
-      // Find student's submitted answer for this subAssignment
       const submittedAnswer = submission.submittedAnswers.find(sa =>
-        sa.subAssignmentId.toString() === subAssign._id.toString()
+        sa.subAssignmentId?.toString() === subAssign._id.toString()
       );
 
       return {
         subAssignmentId: subAssign._id,
-        subModuleName: subAssign.subModuleName || subAssign.title || "",
-        // Student's entered values:
+        subModuleName: subAssign.subModuleName || "",
         enteredValues: submittedAnswer
           ? {
               patientName: submittedAnswer.patientName,
@@ -126,26 +147,45 @@ exports.getStudentAssignmentSummary = async (req, res) => {
               icdCodes: submittedAnswer.icdCodes,
               cptCodes: submittedAnswer.cptCodes,
               notes: submittedAnswer.notes,
+              dynamicQuestions: submittedAnswer.dynamicQuestions || []
             }
           : null,
-        // Grading info:
         correctCount: submittedAnswer?.correctCount || 0,
         wrongCount: submittedAnswer?.wrongCount || 0,
-        progressPercent: submittedAnswer?.progressPercent || 0,
+        progressPercent: submittedAnswer?.progressPercent || 0
       };
     });
 
-    // Build response
-    const response = {
+    // If parent-level assignment has answers
+    let parentSummary = null;
+    if (assignment.dynamicQuestions?.length || assignment.answerKey) {
+      const submittedParent = submission.submittedAnswers.find(sa => !sa.subAssignmentId);
+      parentSummary = {
+        enteredValues: submittedParent
+          ? {
+              patientName: submittedParent.patientName,
+              ageOrDob: submittedParent.ageOrDob,
+              icdCodes: submittedParent.icdCodes,
+              cptCodes: submittedParent.cptCodes,
+              notes: submittedParent.notes,
+              dynamicQuestions: submittedParent.dynamicQuestions || []
+            }
+          : null,
+        correctCount: submittedParent?.correctCount || 0,
+        wrongCount: submittedParent?.wrongCount || 0,
+        progressPercent: submittedParent?.progressPercent || 0
+      };
+    }
+
+    return res.json({
       studentId,
       assignmentId,
       totalCorrect: submission.totalCorrect,
       totalWrong: submission.totalWrong,
       overallProgress: submission.overallProgress,
-      subModulesSummary,
-    };
-
-    return res.json(response);
+      parentSummary,
+      subModulesSummary
+    });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
