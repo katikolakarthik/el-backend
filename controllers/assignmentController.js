@@ -85,79 +85,83 @@ exports.addAssignment = async (req, res) => {
 // Get all assignments
 
 // Get all assignments with merged question format
+// Get all assignments with merged question format
 exports.getAssignments = async (req, res) => {
   try {
     const assignments = await Assignment.find().populate("assignedStudents");
 
-    const formatted = assignments.map(a => {
-      return {
-        _id: a._id,
-        moduleName: a.moduleName,
-        assignedStudents: a.assignedStudents,
-        assignedDate: a.assignedDate,
-        assignmentPdf: a.assignmentPdf || null,
+    // Helper: format predefined questions
+    const formatPredefined = (answerKey) => {
+      if (!answerKey) return [];
+      const hasData =
+        answerKey.patientName ||
+        answerKey.ageOrDob ||
+        (answerKey.icdCodes && answerKey.icdCodes.length) ||
+        (answerKey.cptCodes && answerKey.cptCodes.length) ||
+        answerKey.notes;
 
-        // Merge predefined and dynamic at parent level
-        questions: [
-          // Predefined fields (if any)
-          ...(a.answerKey && (
-            a.answerKey.patientName ||
-            a.answerKey.ageOrDob ||
-            (a.answerKey.icdCodes && a.answerKey.icdCodes.length) ||
-            (a.answerKey.cptCodes && a.answerKey.cptCodes.length) ||
-            a.answerKey.notes
-          ) ? [{
+      return hasData
+        ? [{
             type: "predefined",
-            answerKey: a.answerKey
-          }] : []),
+            answerKey
+          }]
+        : [];
+    };
 
-          // Dynamic questions (if any)
-          ...(a.dynamicQuestions?.length
-            ? a.dynamicQuestions.map(q => ({
-                type: "dynamic",
-                questionText: q.questionText,
-                answer: q.answer
-              }))
-            : [])
+    // Helper: format dynamic questions (with MCQ options + on-the-fly dynamicAnswerKey)
+    const formatDynamic = (dynamicQuestions) => {
+      if (!dynamicQuestions || !dynamicQuestions.length) return [];
+      return dynamicQuestions.map(q => ({
+        type: "dynamic",
+        questionText: q.questionText,
+        options: q.options || [],
+        answer: q.answer
+      }));
+    };
+
+    const formatted = assignments.map(a => ({
+      _id: a._id,
+      moduleName: a.moduleName,
+      assignedStudents: a.assignedStudents,
+      assignedDate: a.assignedDate,
+      assignmentPdf: a.assignmentPdf || null,
+
+      // Merged questions (parent level)
+      questions: [
+        ...formatPredefined(a.answerKey),
+        ...formatDynamic(a.dynamicQuestions)
+      ],
+
+      // On-the-fly dynamicAnswerKey (parent level)
+      dynamicAnswerKey: a.dynamicQuestions?.map(q => ({
+        questionText: q.questionText,
+        answer: q.answer
+      })) || [],
+
+      // Sub-assignments
+      subAssignments: a.subAssignments.map(sa => ({
+        _id: sa._id,
+        subModuleName: sa.subModuleName,
+        assignmentPdf: sa.assignmentPdf || null,
+
+        questions: [
+          ...formatPredefined(sa.answerKey),
+          ...formatDynamic(sa.dynamicQuestions)
         ],
 
-        subAssignments: a.subAssignments.map(sa => ({
-          _id: sa._id,
-          subModuleName: sa.subModuleName,
-          assignmentPdf: sa.assignmentPdf || null,
-
-          questions: [
-            // Predefined sub-assignment
-            ...(sa.answerKey && (
-              sa.answerKey.patientName ||
-              sa.answerKey.ageOrDob ||
-              (sa.answerKey.icdCodes && sa.answerKey.icdCodes.length) ||
-              (sa.answerKey.cptCodes && sa.answerKey.cptCodes.length) ||
-              sa.answerKey.notes
-            ) ? [{
-              type: "predefined",
-              answerKey: sa.answerKey
-            }] : []),
-
-            // Dynamic sub-assignment
-            ...(sa.dynamicQuestions?.length
-              ? sa.dynamicQuestions.map(q => ({
-                  type: "dynamic",
-                  questionText: q.questionText,
-                  answer: q.answer
-                }))
-              : [])
-          ]
-        }))
-      };
-    });
+        // On-the-fly dynamicAnswerKey (sub-assignment level)
+        dynamicAnswerKey: sa.dynamicQuestions?.map(q => ({
+          questionText: q.questionText,
+          answer: q.answer
+        })) || []
+      }))
+    }));
 
     res.json(formatted);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
-
 
 
 
