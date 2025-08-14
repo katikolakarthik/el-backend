@@ -105,3 +105,25 @@ exports.deleteAllAssignments = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+// Get assignments for a specific student by student ID
+exports.getAssignmentsByStudentId = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    
+    // Validate the studentId is a valid ObjectId
+    if (!mongoose.Types.ObjectId.isValid(studentId)) {
+      return res.status(400).json({ error: "Invalid student ID" });
+    }
+
+    // Find all assignments where the student is in the assignedStudents array
+    const assignments = await Assignment.find({
+      assignedStudents: studentId
+    }).populate("assignedStudents");
+
+    res.json(assignments);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
