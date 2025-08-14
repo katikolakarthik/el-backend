@@ -1,38 +1,62 @@
 const Assignment = require("../models/Assignment");
 
+
 exports.addAssignment = async (req, res) => {
   try {
     const { moduleName, assignedStudents, subAssignments } = req.body;
     const files = req.files?.assignmentPdf || [];
 
     let parsedSubAssignments = [];
+    let assignmentData = {
+      moduleName,
+      assignedStudents: assignedStudents ? assignedStudents.split(",") : [],
+    };
+
     if (subAssignments) {
-      parsedSubAssignments = JSON.parse(subAssignments).map((sub, index) => ({
-        subModuleName: sub.subModuleName,
-        patientName: null,
-        ageOrDob: null, // <-- new field
-        icdCodes: [],
-        cptCodes: [],
-        notes: null,
-        assignmentPdf: files[index]
-          ? files[index].path || files[index].url || files[index].secure_url || null
-          : null,
-        answerKey: {
-          patientName: sub.answerPatientName || null,
-          ageOrDob: sub.answerAgeOrDob || null, // <-- new field
-          icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
-          cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
-          notes: sub.answerNotes || null,
-        },
-      }));
+      const parsed = JSON.parse(subAssignments);
+
+      if (parsed.length === 1) {
+        // Single assignment case — store directly at parent level
+        const single = parsed[0];
+        assignmentData.assignmentPdf = files[0]
+          ? files[0].path || files[0].url || files[0].secure_url || null
+          : null;
+        assignmentData.answerKey = {
+          patientName: single.answerPatientName || null,
+          ageOrDob: single.answerAgeOrDob || null,
+          icdCodes: single.answerIcdCodes ? single.answerIcdCodes.split(",") : [],
+          cptCodes: single.answerCptCodes ? single.answerCptCodes.split(",") : [],
+          notes: single.answerNotes || null,
+        };
+      } else {
+        // Multiple subassignments case
+        parsedSubAssignments = parsed.map((sub, index) => ({
+          subModuleName:
+            sub.subModuleName && sub.subModuleName.trim() !== ""
+              ? sub.subModuleName
+              : `${moduleName} - Sub ${index + 1}`,
+          patientName: null,
+          ageOrDob: null,
+          icdCodes: [],
+          cptCodes: [],
+          notes: null,
+          assignmentPdf: files[index]
+            ? files[index].path || files[index].url || files[index].secure_url || null
+            : null,
+          answerKey: {
+            patientName: sub.answerPatientName || null,
+            ageOrDob: sub.answerAgeOrDob || null,
+            icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
+            cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
+            notes: sub.answerNotes || null,
+          },
+        }));
+
+        assignmentData.subAssignments = parsedSubAssignments;
+      }
     }
 
-    const assignment = new Assignment({
-      moduleName,
-      subAssignments: parsedSubAssignments,
-      assignedStudents: assignedStudents ? assignedStudents.split(",") : [],
-    });
-
+    const assignment = new Assignment(assignmentData);
     await assignment.save();
 
     res.json({
@@ -44,6 +68,7 @@ exports.addAssignment = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 
 
