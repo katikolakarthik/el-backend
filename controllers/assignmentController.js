@@ -3,7 +3,7 @@ const Assignment = require("../models/Assignment");
 
 exports.addAssignment = async (req, res) => {
   try {
-    const { moduleName, assignedStudents, subAssignments, dynamicQuestions } = req.body;
+    const { moduleName, assignedStudents, subAssignments } = req.body;
     const files = req.files?.assignmentPdf || [];
 
     let assignmentData = {
@@ -11,36 +11,39 @@ exports.addAssignment = async (req, res) => {
       assignedStudents: assignedStudents ? assignedStudents.split(",") : []
     };
 
-    // Handle dynamic questions at assignment level
-    if (dynamicQuestions) {
-      const parsedDynamic = JSON.parse(dynamicQuestions);
-      assignmentData.dynamicQuestions = parsedDynamic.map(q => ({
-        questionText: q.questionText,
-        answer: q.answer
-      }));
-      assignmentData.dynamicAnswerKey = parsedDynamic.map(q => ({
-        questionText: q.questionText,
-        answer: q.answer
-      }));
-    }
-
-    // Handle predefined or subAssignments
     if (subAssignments) {
       const parsed = JSON.parse(subAssignments);
 
-      if (parsed.length === 1 && !parsed[0].isDynamic) {
+      // Case: Single subAssignment → store at parent level
+      if (parsed.length === 1) {
         const single = parsed[0];
         assignmentData.assignmentPdf = files[0]
           ? files[0].path || files[0].url || files[0].secure_url || null
           : null;
-        assignmentData.answerKey = {
-          patientName: single.answerPatientName || null,
-          ageOrDob: single.answerAgeOrDob || null,
-          icdCodes: single.answerIcdCodes ? single.answerIcdCodes.split(",") : [],
-          cptCodes: single.answerCptCodes ? single.answerCptCodes.split(",") : [],
-          notes: single.answerNotes || null
-        };
-      } else {
+
+        if (single.isDynamic) {
+          // Dynamic stored at parent
+          assignmentData.dynamicQuestions = single.questions.map(q => ({
+            questionText: q.questionText,
+            answer: q.answer
+          }));
+          assignmentData.dynamicAnswerKey = single.questions.map(q => ({
+            questionText: q.questionText,
+            answer: q.answer
+          }));
+        } else {
+          // Predefined stored at parent
+          assignmentData.answerKey = {
+            patientName: single.answerPatientName || null,
+            ageOrDob: single.answerAgeOrDob || null,
+            icdCodes: single.answerIcdCodes ? single.answerIcdCodes.split(",") : [],
+            cptCodes: single.answerCptCodes ? single.answerCptCodes.split(",") : [],
+            notes: single.answerNotes || null
+          };
+        }
+      } 
+      // Case: Multiple subAssignments → store nested
+      else {
         assignmentData.subAssignments = parsed.map((sub, index) => {
           if (sub.isDynamic) {
             return {
@@ -93,8 +96,6 @@ exports.addAssignment = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
-
 
 // Get all assignments
 
