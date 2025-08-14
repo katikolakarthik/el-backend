@@ -1,12 +1,24 @@
 const mongoose = require("mongoose");
 
+// Store each dynamic question answer along with grading details
+const dynamicQuestionAnswerSchema = new mongoose.Schema({
+  questionText: String,
+  type: { type: String }, // e.g., 'mcq', 'text'
+  options: [String], // for MCQ
+  correctAnswer: String, // from assignment definition
+  submittedAnswer: String, // from student
+  isCorrect: Boolean
+});
+
+// Store each sub-assignment answer
 const subAnswerSchema = new mongoose.Schema({
   subAssignmentId: { type: mongoose.Schema.Types.ObjectId }, // Reference to specific sub-assignment
   patientName: String,
-  ageOrDob: String, // New field
+  ageOrDob: String,
   icdCodes: [String],
   cptCodes: [String],
   notes: String,
+  dynamicQuestions: [dynamicQuestionAnswerSchema], // now fully detailed
   correctCount: Number,
   wrongCount: Number,
   progressPercent: Number
