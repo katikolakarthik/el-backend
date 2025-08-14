@@ -107,17 +107,16 @@ exports.deleteAllAssignments = async (req, res) => {
 };
 
 
-
-// Get assignments assigned to a specific student
+// Get only parent assignments assigned to a specific student
 exports.getAssignmentsByStudentId = async (req, res) => {
   try {
     const { studentId } = req.params;
 
-    // Find assignments where assignedStudents contains the studentId
-    const assignments = await Assignment.find({
-      assignedStudents: studentId
-    })
-      .populate("assignedStudents", "name email") // populate with selective fields
+    const assignments = await Assignment.find(
+      { assignedStudents: studentId },
+      { moduleName: 1, assignedDate: 1 } // projection to only include needed fields
+    )
+      .sort({ assignedDate: -1 }) // latest first
       .lean();
 
     if (!assignments || assignments.length === 0) {
