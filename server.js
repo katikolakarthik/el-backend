@@ -117,7 +117,7 @@ app.post("/student/submithistory", submissionController.getStudentAssignmentSumm
 
 
 
-
+app.get('/student/:studentId', assignmentController.getAssignmentsByStudentId);
 
 //individual student summary
 app.get('/student/:studentId/summary', studentController.getStudentSummary);
