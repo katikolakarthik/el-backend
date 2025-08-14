@@ -97,14 +97,84 @@ exports.addAssignment = async (req, res) => {
 
 
 // Get all assignments
+
+// Get all assignments with merged question format
 exports.getAssignments = async (req, res) => {
   try {
     const assignments = await Assignment.find().populate("assignedStudents");
-    res.json(assignments);
+
+    const formatted = assignments.map(a => {
+      return {
+        _id: a._id,
+        moduleName: a.moduleName,
+        assignedStudents: a.assignedStudents,
+        assignedDate: a.assignedDate,
+        assignmentPdf: a.assignmentPdf || null,
+
+        // Merge predefined and dynamic at parent level
+        questions: [
+          // Predefined fields (if any)
+          ...(a.answerKey && (
+            a.answerKey.patientName ||
+            a.answerKey.ageOrDob ||
+            (a.answerKey.icdCodes && a.answerKey.icdCodes.length) ||
+            (a.answerKey.cptCodes && a.answerKey.cptCodes.length) ||
+            a.answerKey.notes
+          ) ? [{
+            type: "predefined",
+            answerKey: a.answerKey
+          }] : []),
+
+          // Dynamic questions (if any)
+          ...(a.dynamicQuestions?.length
+            ? a.dynamicQuestions.map(q => ({
+                type: "dynamic",
+                questionText: q.questionText,
+                answer: q.answer
+              }))
+            : [])
+        ],
+
+        subAssignments: a.subAssignments.map(sa => ({
+          _id: sa._id,
+          subModuleName: sa.subModuleName,
+          assignmentPdf: sa.assignmentPdf || null,
+
+          questions: [
+            // Predefined sub-assignment
+            ...(sa.answerKey && (
+              sa.answerKey.patientName ||
+              sa.answerKey.ageOrDob ||
+              (sa.answerKey.icdCodes && sa.answerKey.icdCodes.length) ||
+              (sa.answerKey.cptCodes && sa.answerKey.cptCodes.length) ||
+              sa.answerKey.notes
+            ) ? [{
+              type: "predefined",
+              answerKey: sa.answerKey
+            }] : []),
+
+            // Dynamic sub-assignment
+            ...(sa.dynamicQuestions?.length
+              ? sa.dynamicQuestions.map(q => ({
+                  type: "dynamic",
+                  questionText: q.questionText,
+                  answer: q.answer
+                }))
+              : [])
+          ]
+        }))
+      };
+    });
+
+    res.json(formatted);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+
+
 
 // Delete entire module
 exports.deleteAssignmentById = async (req, res) => {
