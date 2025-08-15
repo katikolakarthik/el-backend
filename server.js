@@ -119,6 +119,13 @@ app.post("/student/submithistory", submissionController.getStudentAssignmentSumm
 
 app.get("/assignments/student/:studentId", assignmentController.getAssignmentsByStudentId);
 
+
+
+app.get("/assignments/student", assignmentController.getAssignmentDetailsForStudent);
+
+
+
+
 //individual student summary
 app.get('/student/:studentId/summary', studentController.getStudentSummary);
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
