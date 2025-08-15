@@ -244,31 +244,3 @@ exports.getAssignmentsByStudentId = async (req, res) => {
 };
 
 
-// Get full assignment details including all sub-assignments for a specific student
-exports.getAssignmentDetailsForStudent = async (req, res) => {
-  try {
-    const { studentId, assignmentId } = req.params;
-
-    // Find the assignment that matches both the ID and has the student in assignedStudents
-    const assignment = await Assignment.findOne({
-      _id: assignmentId,
-      assignedStudents: studentId
-    })
-    .populate('assignedStudents', 'name email') // Optional: populate student details if needed
-    .lean();
-
-    if (!assignment) {
-      return res.status(404).json({
-        success: false,
-        message: "Assignment not found or not assigned to this student"
-      });
-    }
-
-    res.json({
-      success: true,
-      assignment
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
