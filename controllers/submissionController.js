@@ -213,3 +213,21 @@ exports.getStudentAssignmentSummary = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+
+
+// Add this to your backend routes
+exports.getSubmission = async (req, res) => {
+  try {
+    const { studentId, assignmentId } = req.query;
+    
+    const submission = await Submission.findOne({ studentId, assignmentId });
+    
+    if (!submission) {
+      return res.json({ submission: null });
+    }
+    
+    res.json({ submission });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
