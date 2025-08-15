@@ -127,8 +127,14 @@ app.get("/assignments/:assignmentId/student/:studentId", assignmentController.ge
 
 //individual student summary
 app.get('/student/:studentId/summary', studentController.getStudentSummary);
+
+
+app.get("/student/submission", submissionController.getSubmission);
+
+
+
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
 module.exports = app;
 
-
+`
