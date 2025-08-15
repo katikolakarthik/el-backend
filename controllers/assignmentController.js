@@ -244,3 +244,93 @@ exports.getAssignmentsByStudentId = async (req, res) => {
 };
 
 
+// Get full details of a parent assignment for a specific student
+exports.getAssignmentDetailsForStudent = async (req, res) => {
+  try {
+    const { studentId, assignmentId } = req.params;
+
+    // Find the assignment where the student is assigned
+    const assignment = await Assignment.findOne({
+      _id: assignmentId,
+      assignedStudents: studentId
+    }).populate("assignedStudents");
+
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        message: "Assignment not found or not assigned to this student"
+      });
+    }
+
+    // Helper: format predefined answers
+    const formatPredefined = (answerKey) => {
+      if (!answerKey) return [];
+      const hasData =
+        answerKey.patientName ||
+        answerKey.ageOrDob ||
+        (answerKey.icdCodes && answerKey.icdCodes.length) ||
+        (answerKey.cptCodes && answerKey.cptCodes.length) ||
+        answerKey.notes;
+
+      return hasData
+        ? [{
+            type: "predefined",
+            answerKey
+          }]
+        : [];
+    };
+
+    // Helper: format dynamic questions
+    const formatDynamic = (dynamicQuestions) => {
+      if (!dynamicQuestions || !dynamicQuestions.length) return [];
+      return dynamicQuestions.map(q => ({
+        type: "dynamic",
+        questionText: q.questionText,
+        options: q.options || [],
+        answer: q.answer
+      }));
+    };
+
+    // Prepare the response
+    const formattedAssignment = {
+      _id: assignment._id,
+      moduleName: assignment.moduleName,
+      assignedStudents: assignment.assignedStudents,
+      assignedDate: assignment.assignedDate,
+      assignmentPdf: assignment.assignmentPdf || null,
+
+      // Parent-level questions
+      questions: [
+        ...formatPredefined(assignment.answerKey),
+        ...formatDynamic(assignment.dynamicQuestions)
+      ],
+      dynamicAnswerKey: assignment.dynamicQuestions?.map(q => ({
+        questionText: q.questionText,
+        answer: q.answer
+      })) || [],
+
+      // Sub-assignments
+      subAssignments: assignment.subAssignments.map(sa => ({
+        _id: sa._id,
+        subModuleName: sa.subModuleName,
+        assignmentPdf: sa.assignmentPdf || null,
+        questions: [
+          ...formatPredefined(sa.answerKey),
+          ...formatDynamic(sa.dynamicQuestions)
+        ],
+        dynamicAnswerKey: sa.dynamicQuestions?.map(q => ({
+          questionText: q.questionText,
+          answer: q.answer
+        })) || []
+      }))
+    };
+
+    res.json({
+      success: true,
+      assignment: formattedAssignment
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
