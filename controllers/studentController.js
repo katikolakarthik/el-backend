@@ -391,39 +391,53 @@ exports.getStudentSummary = async (req, res) => {
 // ==================== Dashboard Summary ====================
 exports.getDashboardSummary = async (req, res) => {
   try {
-    // Total students
+    // 1. Total students
     const totalStudents = await Student.countDocuments();
 
-    // Total assignments
+    // 2. Total assignments (only parent level)
     const totalAssignments = await Assignment.countDocuments();
 
-    // Total submissions
-    const totalSubmissions = await Submission.countDocuments();
+    // 3. Students who have submitted at least one assignment
+    const studentsSubmittedCount = await Submission.distinct("studentId").then(students => students.length);
 
-    // Average progress (from all submissions)
-    const avgProgressData = await Submission.aggregate([
+    // 4 & 5. Calculate average progress and average score globally
+    const scoreProgressData = await Submission.aggregate([
       {
         $group: {
           _id: null,
-          avgProgress: { $avg: "$progressPercent" }
+          avgProgress: { $avg: "$overallProgress" }, // Global progress %
+          avgScore: {
+            $avg: {
+              $cond: [
+                { $gt: ["$totalCorrect", 0] },
+                {
+                  $multiply: [
+                    { $divide: ["$totalCorrect", { $add: ["$totalCorrect", "$totalWrong"] }] },
+                    100
+                  ]
+                },
+                0
+              ]
+            }
+          }
         }
       }
     ]);
 
-    const averageProgress =
-      avgProgressData.length > 0 ? avgProgressData[0].avgProgress : 0;
+    const averageProgress = scoreProgressData.length > 0 ? scoreProgressData[0].avgProgress || 0 : 0;
+    const averageScore = scoreProgressData.length > 0 ? scoreProgressData[0].avgScore || 0 : 0;
 
     res.json({
       totalStudents,
       totalAssignments,
-      totalSubmissions,
-      averageProgress: Number(averageProgress.toFixed(2)) // rounded to 2 decimals
+      studentsSubmittedCount,
+      averageProgress: Number(averageProgress.toFixed(2)),
+      averageScore: Number(averageScore.toFixed(2))
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
-
 
 
 //recent students
