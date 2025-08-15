@@ -18,6 +18,8 @@ function arraysMatchIgnoreOrder(a = [], b = []) {
   const sortedB = b.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
   return sortedA.every((val, idx) => val === sortedB[idx]);
 }
+
+
 exports.submitAssignment = async (req, res) => {
   try {
     const { studentId, assignmentId, submittedAnswers } = req.body;
