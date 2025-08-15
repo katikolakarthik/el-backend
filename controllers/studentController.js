@@ -399,16 +399,10 @@ exports.getStudentSummary = async (req, res) => {
 // ==================== Dashboard Summary ====================
 exports.getDashboardSummary = async (req, res) => {
   try {
-    // Total students
     const totalStudents = await Student.countDocuments();
-
-    // Total assignments
     const totalAssignments = await Assignment.countDocuments();
-
-    // Total submissions
     const totalSubmissions = await Submission.countDocuments();
 
-    // Average progress (from all submissions)
     const avgProgressData = await Submission.aggregate([
       {
         $group: {
@@ -419,19 +413,20 @@ exports.getDashboardSummary = async (req, res) => {
     ]);
 
     const averageProgress =
-      avgProgressData.length > 0 ? avgProgressData[0].avgProgress : 0;
+      avgProgressData.length > 0 && avgProgressData[0].avgProgress != null
+        ? avgProgressData[0].avgProgress
+        : 0;
 
     res.json({
       totalStudents,
       totalAssignments,
       totalSubmissions,
-      averageProgress: Number(averageProgress.toFixed(2)) // rounded to 2 decimals
+      averageProgress: Number(averageProgress.toFixed(2))
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
-
 
 
 //recent students
