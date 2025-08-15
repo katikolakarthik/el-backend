@@ -311,36 +311,47 @@ exports.getStudentProfile = async (req, res) => {
 // ==================== Dashboard Summary ====================
 exports.getDashboardSummary = async (req, res) => {
   try {
+    // Total counts
     const totalStudents = await Student.countDocuments();
     const totalAssignments = await Assignment.countDocuments();
-    const totalSubmissions = await Submission.countDocuments();
+    
+    // Get only distinct student submissions (count students who submitted at least once)
+    const studentsWithSubmissions = await Submission.distinct('studentId');
+    const totalStudentsSubmitted = studentsWithSubmissions.length;
 
-    // Correct aggregation to calculate average progress
-    const avgProgressData = await Submission.aggregate([    
-      {    
-        $group: {    
-          _id: null,    
-          avgProgress: { $avg: "$overallProgress" } // Use overallProgress instead of progressPercent
-        }    
-      }    
-    ]);    
+    // Calculate average progress from all submissions
+    const avgProgressData = await Submission.aggregate([
+      { 
+        $group: { 
+          _id: null,
+          avgProgress: { $avg: "$overallProgress" },
+          totalSubmissions: { $sum: 1 }
+        } 
+      }
+    ]);
 
-    const averageProgress =    
-      avgProgressData.length > 0 && avgProgressData[0].avgProgress != null    
-        ? avgProgressData[0].avgProgress    
-        : 0;    
+    const result = {
+      totalStudents,
+      totalStudentsSubmitted, // More meaningful than totalSubmissions
+      totalAssignments,
+      averageProgress: avgProgressData[0]?.avgProgress 
+        ? Number(avgProgressData[0].avgProgress.toFixed(2)) 
+        : 0,
+      totalSubmissions: avgProgressData[0]?.totalSubmissions || 0
+    };
 
-    res.json({    
-      totalStudents,    
-      totalAssignments,    
-      totalSubmissions,    
-      averageProgress: Number(averageProgress.toFixed(2))    
-    });
-
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+
+
+
+
+
 
 //recent students
 
