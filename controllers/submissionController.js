@@ -25,26 +25,36 @@ exports.submitAssignment = async (req, res) => {
     const assignment = await Assignment.findById(assignmentId);
     if (!assignment) return res.status(404).json({ error: "Assignment not found" });
 
-    let totalCorrect = 0, totalWrong = 0;
-    let processedAnswers = [];
+    // Check if submission already exists
+    let submission = await Submission.findOne({ studentId, assignmentId });
 
-    // Loop through submitted answers
+    if (!submission) {
+      // No submission yet → create fresh
+      submission = new Submission({
+        studentId,
+        assignmentId,
+        submittedAnswers: [],
+        totalCorrect: 0,
+        totalWrong: 0,
+        overallProgress: 0
+      });
+    }
+
+    // Process each submitted submodule independently
     submittedAnswers.forEach(sub => {
       let correctCount = 0, wrongCount = 0;
       let target;
 
-      // If subAssignmentId exists → grade sub-assignment
       if (sub.subAssignmentId) {
         target = assignment.subAssignments.id(sub.subAssignmentId);
       } else {
-        target = assignment; // grading parent-level
+        target = assignment;
       }
       if (!target) return;
 
       let gradedDynamicQuestions = [];
 
       if (target.dynamicQuestions?.length) {
-        // Grade dynamic questions (MCQ or text)
         target.dynamicQuestions.forEach((q) => {
           const submittedQ = (sub.dynamicQuestions || []).find(
             sq => textMatchIgnoreCase(sq.questionText, q.questionText)
@@ -66,7 +76,6 @@ exports.submitAssignment = async (req, res) => {
           });
         });
       } else if (target.answerKey) {
-        // Grade predefined fields
         if (textMatchIgnoreCase(target.answerKey.patientName, sub.patientName)) correctCount++;
         else wrongCount++;
 
@@ -81,10 +90,8 @@ exports.submitAssignment = async (req, res) => {
       }
 
       const progressPercent = Math.round((correctCount / (correctCount + wrongCount)) * 100) || 0;
-      totalCorrect += correctCount;
-      totalWrong += wrongCount;
 
-      processedAnswers.push({
+      const processedAnswer = {
         subAssignmentId: sub.subAssignmentId || null,
         patientName: sub.patientName || null,
         ageOrDob: sub.ageOrDob || null,
@@ -95,27 +102,35 @@ exports.submitAssignment = async (req, res) => {
         correctCount,
         wrongCount,
         progressPercent
-      });
+      };
+
+      // Update existing submodule answer or add new
+      const existingIndex = submission.submittedAnswers.findIndex(
+        ans => String(ans.subAssignmentId) === String(sub.subAssignmentId || null)
+      );
+
+      if (existingIndex >= 0) {
+        submission.submittedAnswers[existingIndex] = processedAnswer;
+      } else {
+        submission.submittedAnswers.push(processedAnswer);
+      }
     });
 
-    const overallProgress = Math.round((totalCorrect / (totalCorrect + totalWrong)) * 100) || 0;
-
-    const submission = new Submission({
-      studentId,
-      assignmentId,
-      submittedAnswers: processedAnswers,
-      totalCorrect,
-      totalWrong,
-      overallProgress
-    });
+    // Recalculate totals
+    submission.totalCorrect = submission.submittedAnswers.reduce((sum, a) => sum + a.correctCount, 0);
+    submission.totalWrong = submission.submittedAnswers.reduce((sum, a) => sum + a.wrongCount, 0);
+    submission.overallProgress = Math.round(
+      (submission.totalCorrect / (submission.totalCorrect + submission.totalWrong)) * 100
+    ) || 0;
 
     await submission.save();
 
     res.json({
       success: true,
-      message: "Assignment submitted",
+      message: "Assignment submitted/updated successfully",
       submission
     });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
