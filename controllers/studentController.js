@@ -140,7 +140,7 @@ exports.updateStudent = async (req, res) => {
 // Get all students with summary info (can be paginated)
 exports.getStudentsWithSummary = async (req, res) => {
   try {
-    const students = await Student.find().lean();
+    const students = await Student.find();
 
     const result = await Promise.all(students.map(async (student) => {
       // Get all assignments assigned to this student
@@ -148,53 +148,45 @@ exports.getStudentsWithSummary = async (req, res) => {
         assignedStudents: student._id
       }).lean();
 
-      // Flatten both parent-level assignments and their subAssignments
-      const allAssignedModules = assignedAssignments.flatMap(a => {
-        const subModules = Array.isArray(a.subAssignments) && a.subAssignments.length
+      // Flatten subAssignments with assignment details
+      const allAssignedSubAssignments = assignedAssignments.flatMap(a =>
+        Array.isArray(a.subAssignments)
           ? a.subAssignments.map(sa => ({
               _id: sa._id.toString(),
               subModuleName: sa.subModuleName,
               assignmentId: a._id.toString(),
-              moduleName: a.moduleName,
-              isParentLevel: false
+              moduleName: a.moduleName
             }))
-          : [];
+          : []
+      );
 
-        // Include parent-level assignment if it has dynamicQuestions or answerKey
-        const parentModule = (a.dynamicQuestions?.length || a.answerKey)
-          ? [{
-              _id: a._id.toString(), // Use assignmentId as identifier
-              subModuleName: null,
-              assignmentId: a._id.toString(),
-              moduleName: a.moduleName,
-              isParentLevel: true
-            }]
-          : [];
-
-        return [...parentModule, ...subModules];
-      });
-
-      const assignedAssignmentsCount = allAssignedModules.length;
+      const assignedAssignmentsCount = allAssignedSubAssignments.length;
 
       // Get submissions for this student
-      const submissions = await Submission.find({ studentId: student._id }).lean();
+      const submissions = await Submission.find({
+        studentId: student._id
+      }).lean();
 
-      // Extract submitted IDs (parent-level or subAssignments)
-      const submittedIds = new Set(
+      // Extract submitted subAssignmentIds safely
+      const submittedSubAssignmentIds = new Set(
         submissions.flatMap(s =>
           Array.isArray(s.submittedAnswers)
-            ? s.submittedAnswers.map(ans =>
-                ans.subAssignmentId
-                  ? ans.subAssignmentId.toString()
-                  : ans.assignmentId?.toString() // parent-level
-              )
+            ? s.submittedAnswers.map(ans => ans.subAssignmentId?.toString())
             : []
         )
       );
 
       // Build submitted & not submitted lists
-      const submittedList = allAssignedModules.filter(m => submittedIds.has(m._id));
-      const notSubmittedList = allAssignedModules.filter(m => !submittedIds.has(m._id));
+      const submittedList = allAssignedSubAssignments.filter(sa =>
+        submittedSubAssignmentIds.has(sa._id)
+      );
+
+      const notSubmittedList = allAssignedSubAssignments.filter(sa =>
+        !submittedSubAssignmentIds.has(sa._id)
+      );
+
+      const submittedCount = submittedList.length;
+      const notSubmittedCount = notSubmittedList.length;
 
       return {
         id: student._id,
@@ -204,8 +196,8 @@ exports.getStudentsWithSummary = async (req, res) => {
         remainingAmount: student.remainingAmount,
         enrolledDate: student.enrolledDate,
         assignedAssignmentsCount,
-        submittedCount: submittedList.length,
-        notSubmittedCount: notSubmittedList.length,
+        submittedCount,
+        notSubmittedCount,
         submittedAssignments: submittedList,
         notSubmittedAssignments: notSubmittedList,
         profileImage: student.profileImage
@@ -220,6 +212,52 @@ exports.getStudentsWithSummary = async (req, res) => {
 
 
 
+
+exports.getStudentSubmissions = async (req, res) => {
+  try {
+    const { studentId, moduleName, subModuleName } = req.query;
+
+    // Build filter for assignments by module/submodule if provided
+    const assignmentFilter = {};
+    if (moduleName) assignmentFilter.moduleName = moduleName;
+    if (subModuleName) assignmentFilter.subModuleName = subModuleName;
+
+    // Find assignments matching filter
+    const assignments = await Assignment.find(assignmentFilter).select('_id');
+
+    const assignmentIds = assignments.map(a => a._id);
+
+    // Find submissions by student and filtered assignments
+    const submissions = await Submission.find({
+      studentId,
+      assignmentId: { $in: assignmentIds }
+    })
+    .populate({
+      path: 'assignmentId',
+      select: 'moduleName subModuleName assignedDate assignmentPdf'
+    })
+    .sort({ submissionDate: -1 });
+
+    // Format response
+    const formatted = submissions.map(sub => ({
+      submissionId: sub._id,
+      assignmentId: sub.assignmentId._id,
+      moduleName: sub.assignmentId.moduleName,
+      subModuleName: sub.assignmentId.subModuleName,
+      assignmentPdf: sub.assignmentId.assignmentPdf,
+      submittedAnswers: sub.submittedAnswers,
+      correctCount: sub.correctCount,
+      wrongCount: sub.wrongCount,
+      progressPercent: sub.progressPercent,
+      submissionDate: sub.submissionDate
+    }));
+
+    res.json(formatted);
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 
 
 
@@ -304,55 +342,82 @@ exports.getStudentProfile = async (req, res) => {
 //individual student summary 
 
 
+exports.getStudentSummary = async (req, res) => {
+  try {
+    const { studentId } = req.params;
 
+    // Find student
+    const student = await Student.findById(studentId);
+    if (!student) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    // Find assignments assigned to this student
+    const assignedAssignments = await Assignment.find({
+      assignedStudents: student._id
+    }).select('_id');
+
+    const assignedAssignmentsCount = assignedAssignments.length;
+    const assignedAssignmentIds = assignedAssignments.map(a => a._id);
+
+    // Count submissions by student for assigned assignments
+    const submissionsCount = await Submission.countDocuments({
+      studentId: student._id,
+      assignmentId: { $in: assignedAssignmentIds }
+    });
+
+    const notSubmittedCount = assignedAssignmentsCount - submissionsCount;
+
+    // Return summary
+    res.json({
+      id: student._id,
+      name: student.name,
+      courseName: student.courseName,
+      paidAmount: student.paidAmount,
+      remainingAmount: student.remainingAmount,
+      enrolledDate: student.enrolledDate,
+      profileImage: student.profileImage,
+      assignedAssignmentsCount,
+      submittedCount: submissionsCount,
+      notSubmittedCount
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 
 
 
 // ==================== Dashboard Summary ====================
 exports.getDashboardSummary = async (req, res) => {
   try {
-    // 1. Total students
+    // Total students
     const totalStudents = await Student.countDocuments();
 
-    // 2. Total assignments (only parent level)
+    // Total assignments
     const totalAssignments = await Assignment.countDocuments();
 
-    // 3. Students who have submitted at least one assignment
-    const studentsSubmittedCount = await Submission.distinct("studentId").then(students => students.length);
+    // Total submissions
+    const totalSubmissions = await Submission.countDocuments();
 
-    // 4 & 5. Calculate average progress and average score globally
-    const scoreProgressData = await Submission.aggregate([
+    // Average progress (from all submissions)
+    const avgProgressData = await Submission.aggregate([
       {
         $group: {
           _id: null,
-          avgProgress: { $avg: "$overallProgress" }, // Global progress %
-          avgScore: {
-            $avg: {
-              $cond: [
-                { $gt: ["$totalCorrect", 0] },
-                {
-                  $multiply: [
-                    { $divide: ["$totalCorrect", { $add: ["$totalCorrect", "$totalWrong"] }] },
-                    100
-                  ]
-                },
-                0
-              ]
-            }
-          }
+          avgProgress: { $avg: "$progressPercent" }
         }
       }
     ]);
 
-    const averageProgress = scoreProgressData.length > 0 ? scoreProgressData[0].avgProgress || 0 : 0;
-    const averageScore = scoreProgressData.length > 0 ? scoreProgressData[0].avgScore || 0 : 0;
+    const averageProgress =
+      avgProgressData.length > 0 ? avgProgressData[0].avgProgress : 0;
 
     res.json({
       totalStudents,
       totalAssignments,
-      studentsSubmittedCount,
-      averageProgress: Number(averageProgress.toFixed(2)),
-      averageScore: Number(averageScore.toFixed(2))
+      totalSubmissions,
+      averageProgress: Number(averageProgress.toFixed(2)) // rounded to 2 decimals
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
