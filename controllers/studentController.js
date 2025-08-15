@@ -311,49 +311,46 @@ exports.getStudentProfile = async (req, res) => {
 // ==================== Dashboard Summary ====================
 exports.getDashboardSummary = async (req, res) => {
   try {
+    // 1. Total students
     const totalStudents = await Student.countDocuments();
+
+    // 2. Total assignments (only parent level)
     const totalAssignments = await Assignment.countDocuments();
 
-    const submissionStats = await Submission.aggregate([
+    // 3. Students who have submitted at least one assignment
+    const studentsSubmittedCount = await Submission.distinct("studentId").then(students => students.length);
+
+    // 4 & 5. Calculate average progress and average score globally
+    const scoreProgressData = await Submission.aggregate([
       {
         $group: {
-          _id: "$assignmentId",
-          submittedStudents: { $addToSet: "$studentId" },
-          avgProgress: { $avg: "$overallProgress" },
+          _id: null,
+          avgProgress: { $avg: "$overallProgress" }, // Global progress %
           avgScore: {
-            $avg: { $divide: ["$totalCorrect", { $add: ["$totalCorrect", "$totalWrong"] }] }
+            $avg: {
+              $cond: [
+                { $gt: ["$totalCorrect", 0] },
+                {
+                  $multiply: [
+                    { $divide: ["$totalCorrect", { $add: ["$totalCorrect", "$totalWrong"] }] },
+                    100
+                  ]
+                },
+                0
+              ]
+            }
           }
-        }
-      },
-      {
-        $project: {
-          submittedCount: { $size: "$submittedStudents" },
-          avgProgress: 1,
-          avgScore: { $multiply: ["$avgScore", 100] } // percentage
         }
       }
     ]);
 
-    let totalSubmittedStudents = 0;
-    let totalAvgProgress = 0;
-    let totalAvgScore = 0;
-
-    submissionStats.forEach((item) => {
-      totalSubmittedStudents += item.submittedCount;
-      totalAvgProgress += item.avgProgress;
-      totalAvgScore += item.avgScore;
-    });
-
-    const averageProgress =
-      submissionStats.length > 0 ? totalAvgProgress / submissionStats.length : 0;
-
-    const averageScore =
-      submissionStats.length > 0 ? totalAvgScore / submissionStats.length : 0;
+    const averageProgress = scoreProgressData.length > 0 ? scoreProgressData[0].avgProgress || 0 : 0;
+    const averageScore = scoreProgressData.length > 0 ? scoreProgressData[0].avgScore || 0 : 0;
 
     res.json({
       totalStudents,
       totalAssignments,
-      totalSubmittedStudents,
+      studentsSubmittedCount,
       averageProgress: Number(averageProgress.toFixed(2)),
       averageScore: Number(averageScore.toFixed(2))
     });
@@ -361,8 +358,6 @@ exports.getDashboardSummary = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
-
 
 
 
