@@ -391,23 +391,25 @@ exports.getStudentSummary = async (req, res) => {
 // ==================== Dashboard Summary ====================
 exports.getDashboardSummary = async (req, res) => {
   try {
-    // 1. Total students
-    const totalStudents = await Student.countDocuments();
+    // 1. Total students (excluding admin)
+    const totalStudents = await Student.countDocuments({ role: { $ne: "admin" } });
 
     // 2. Total assignments (only parent level)
     const totalAssignments = await Assignment.countDocuments();
 
-    // 3. Students who submitted at least one assignment
-    const submittedStudentIds = await Submission.distinct("studentId");
+    // 3. Students who submitted at least one assignment (excluding admin submissions)
+    const adminIds = await Student.find({ role: "admin" }).distinct("_id");
+    const submittedStudentIds = await Submission.distinct("studentId", { studentId: { $nin: adminIds } });
     const studentsSubmittedCount = submittedStudentIds.length;
 
-    // 4. Completion rate (now averageProgress)
+    // 4. Completion rate (averageProgress)
     const averageProgress = totalStudents > 0
       ? (studentsSubmittedCount / totalStudents) * 100
       : 0;
 
-    // 5. Average score (based on correct answers globally)
+    // 5. Average score (excluding admin submissions)
     const scoreData = await Submission.aggregate([
+      { $match: { studentId: { $nin: adminIds } } },
       {
         $group: {
           _id: null,
@@ -431,8 +433,8 @@ exports.getDashboardSummary = async (req, res) => {
 
     const averageScore = scoreData.length > 0 ? scoreData[0].avgScore || 0 : 0;
 
-    // 6. Total submissions (optional, still sending)
-    const totalSubmissions = await Submission.countDocuments();
+    // 6. Total submissions (excluding admin submissions)
+    const totalSubmissions = await Submission.countDocuments({ studentId: { $nin: adminIds } });
 
     res.json({
       totalStudents,
@@ -446,7 +448,6 @@ exports.getDashboardSummary = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 
 
 
