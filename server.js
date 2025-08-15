@@ -100,8 +100,6 @@ app.put("/admin/student/:id", upload.single("profileImage"), studentController.u
 // Get Students with summary info
 app.get("/admin/students/summary", studentController.getStudentsWithSummary);
 
-// Get student submissions with optional filtering by module/submodule
-app.get("/student/submissions", studentController.getStudentSubmissions);
 
 // Get student profile by ID
 app.get("/student/profile/:studentId", studentController.getStudentProfile);
