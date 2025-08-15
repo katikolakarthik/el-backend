@@ -397,15 +397,20 @@ exports.getDashboardSummary = async (req, res) => {
     // 2. Total assignments (only parent level)
     const totalAssignments = await Assignment.countDocuments();
 
-    // 3. Students who have submitted at least one assignment
-    const studentsSubmittedCount = await Submission.distinct("studentId").then(students => students.length);
+    // 3. Students who submitted at least one assignment
+    const submittedStudentIds = await Submission.distinct("studentId");
+    const studentsSubmittedCount = submittedStudentIds.length;
 
-    // 4 & 5. Calculate average progress and average score globally
-    const scoreProgressData = await Submission.aggregate([
+    // 4. Completion rate (now averageProgress)
+    const averageProgress = totalStudents > 0
+      ? (studentsSubmittedCount / totalStudents) * 100
+      : 0;
+
+    // 5. Average score (based on correct answers globally)
+    const scoreData = await Submission.aggregate([
       {
         $group: {
           _id: null,
-          avgProgress: { $avg: "$overallProgress" }, // Global progress %
           avgScore: {
             $avg: {
               $cond: [
@@ -424,20 +429,25 @@ exports.getDashboardSummary = async (req, res) => {
       }
     ]);
 
-    const averageProgress = scoreProgressData.length > 0 ? scoreProgressData[0].avgProgress || 0 : 0;
-    const averageScore = scoreProgressData.length > 0 ? scoreProgressData[0].avgScore || 0 : 0;
+    const averageScore = scoreData.length > 0 ? scoreData[0].avgScore || 0 : 0;
+
+    // 6. Total submissions (optional, still sending)
+    const totalSubmissions = await Submission.countDocuments();
 
     res.json({
       totalStudents,
       totalAssignments,
       studentsSubmittedCount,
-      averageProgress: Number(averageProgress.toFixed(2)),
-      averageScore: Number(averageScore.toFixed(2))
+      totalSubmissions,
+      averageProgress: Number(averageProgress.toFixed(2)), // completion %
+      averageScore: Number(averageScore.toFixed(2)) // marks %
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
+
 
 
 //recent students
