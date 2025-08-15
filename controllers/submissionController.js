@@ -1,8 +1,6 @@
 const Submission = require("../models/Submission");
 const Assignment = require("../models/Assignment");
 
-
-
 // Helper: compare strings ignoring case and extra spaces
 function textMatchIgnoreCase(a, b) {
   const strA = (a ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
@@ -18,7 +16,6 @@ function arraysMatchIgnoreOrder(a = [], b = []) {
   const sortedB = b.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
   return sortedA.every((val, idx) => val === sortedB[idx]);
 }
-
 
 exports.submitAssignment = async (req, res) => {
   try {
@@ -78,6 +75,7 @@ exports.submitAssignment = async (req, res) => {
           });
         });
       } else if (target.answerKey) {
+        // Explicitly excluding `notes` from grading
         if (textMatchIgnoreCase(target.answerKey.patientName, sub.patientName)) correctCount++;
         else wrongCount++;
 
@@ -89,6 +87,8 @@ exports.submitAssignment = async (req, res) => {
 
         if (arraysMatchIgnoreOrder(target.answerKey.cptCodes, sub.cptCodes)) correctCount++;
         else wrongCount++;
+
+        // `notes` field intentionally ignored in grading
       }
 
       const progressPercent = Math.round((correctCount / (correctCount + wrongCount)) * 100) || 0;
@@ -99,7 +99,7 @@ exports.submitAssignment = async (req, res) => {
         ageOrDob: sub.ageOrDob || null,
         icdCodes: sub.icdCodes || [],
         cptCodes: sub.cptCodes || [],
-        notes: sub.notes || null,
+        notes: sub.notes || null, // store but don't grade
         dynamicQuestions: gradedDynamicQuestions,
         correctCount,
         wrongCount,
@@ -137,8 +137,6 @@ exports.submitAssignment = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
-
 
 
 exports.getStudentAssignmentSummary = async (req, res) => {
