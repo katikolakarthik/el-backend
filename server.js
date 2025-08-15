@@ -104,7 +104,7 @@ app.get("/admin/students/summary", studentController.getStudentsWithSummary);
 // Get student profile by ID
 app.get("/student/profile/:studentId", studentController.getStudentProfile);
 
-app.get("/admin/dashboard", studentController.getDashboardSummary);
+app.get("/admin/dashboard", (req, res) => studentController.getDashboardSummary(req, res));
 
 
 app.get("/admin/studentslist", studentController.getRecentStudents);
