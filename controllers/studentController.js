@@ -221,52 +221,6 @@ exports.getStudentsWithSummary = async (req, res) => {
 
 
 
-exports.getStudentSubmissions = async (req, res) => {
-  try {
-    const { studentId, moduleName, subModuleName } = req.query;
-
-    // Build filter for assignments by module/submodule if provided
-    const assignmentFilter = {};
-    if (moduleName) assignmentFilter.moduleName = moduleName;
-    if (subModuleName) assignmentFilter.subModuleName = subModuleName;
-
-    // Find assignments matching filter
-    const assignments = await Assignment.find(assignmentFilter).select('_id');
-
-    const assignmentIds = assignments.map(a => a._id);
-
-    // Find submissions by student and filtered assignments
-    const submissions = await Submission.find({
-      studentId,
-      assignmentId: { $in: assignmentIds }
-    })
-    .populate({
-      path: 'assignmentId',
-      select: 'moduleName subModuleName assignedDate assignmentPdf'
-    })
-    .sort({ submissionDate: -1 });
-
-    // Format response
-    const formatted = submissions.map(sub => ({
-      submissionId: sub._id,
-      assignmentId: sub.assignmentId._id,
-      moduleName: sub.assignmentId.moduleName,
-      subModuleName: sub.assignmentId.subModuleName,
-      assignmentPdf: sub.assignmentId.assignmentPdf,
-      submittedAnswers: sub.submittedAnswers,
-      correctCount: sub.correctCount,
-      wrongCount: sub.wrongCount,
-      progressPercent: sub.progressPercent,
-      submissionDate: sub.submissionDate
-    }));
-
-    res.json(formatted);
-
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
 
 
 
@@ -350,49 +304,7 @@ exports.getStudentProfile = async (req, res) => {
 //individual student summary 
 
 
-exports.getStudentSummary = async (req, res) => {
-  try {
-    const { studentId } = req.params;
 
-    // Find student
-    const student = await Student.findById(studentId);
-    if (!student) {
-      return res.status(404).json({ error: "Student not found" });
-    }
-
-    // Find assignments assigned to this student
-    const assignedAssignments = await Assignment.find({
-      assignedStudents: student._id
-    }).select('_id');
-
-    const assignedAssignmentsCount = assignedAssignments.length;
-    const assignedAssignmentIds = assignedAssignments.map(a => a._id);
-
-    // Count submissions by student for assigned assignments
-    const submissionsCount = await Submission.countDocuments({
-      studentId: student._id,
-      assignmentId: { $in: assignedAssignmentIds }
-    });
-
-    const notSubmittedCount = assignedAssignmentsCount - submissionsCount;
-
-    // Return summary
-    res.json({
-      id: student._id,
-      name: student.name,
-      courseName: student.courseName,
-      paidAmount: student.paidAmount,
-      remainingAmount: student.remainingAmount,
-      enrolledDate: student.enrolledDate,
-      profileImage: student.profileImage,
-      assignedAssignmentsCount,
-      submittedCount: submissionsCount,
-      notSubmittedCount
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
 
 
 
