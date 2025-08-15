@@ -140,7 +140,7 @@ exports.updateStudent = async (req, res) => {
 // Get all students with summary info (can be paginated)
 exports.getStudentsWithSummary = async (req, res) => {
   try {
-    const students = await Student.find();
+    const students = await Student.find().lean();
 
     const result = await Promise.all(students.map(async (student) => {
       // Get all assignments assigned to this student
@@ -148,45 +148,53 @@ exports.getStudentsWithSummary = async (req, res) => {
         assignedStudents: student._id
       }).lean();
 
-      // Flatten subAssignments with assignment details
-      const allAssignedSubAssignments = assignedAssignments.flatMap(a =>
-        Array.isArray(a.subAssignments)
+      // Flatten both parent-level assignments and their subAssignments
+      const allAssignedModules = assignedAssignments.flatMap(a => {
+        const subModules = Array.isArray(a.subAssignments) && a.subAssignments.length
           ? a.subAssignments.map(sa => ({
               _id: sa._id.toString(),
               subModuleName: sa.subModuleName,
               assignmentId: a._id.toString(),
-              moduleName: a.moduleName
+              moduleName: a.moduleName,
+              isParentLevel: false
             }))
-          : []
-      );
+          : [];
 
-      const assignedAssignmentsCount = allAssignedSubAssignments.length;
+        // Include parent-level assignment if it has dynamicQuestions or answerKey
+        const parentModule = (a.dynamicQuestions?.length || a.answerKey)
+          ? [{
+              _id: a._id.toString(), // Use assignmentId as identifier
+              subModuleName: null,
+              assignmentId: a._id.toString(),
+              moduleName: a.moduleName,
+              isParentLevel: true
+            }]
+          : [];
+
+        return [...parentModule, ...subModules];
+      });
+
+      const assignedAssignmentsCount = allAssignedModules.length;
 
       // Get submissions for this student
-      const submissions = await Submission.find({
-        studentId: student._id
-      }).lean();
+      const submissions = await Submission.find({ studentId: student._id }).lean();
 
-      // Extract submitted subAssignmentIds safely
-      const submittedSubAssignmentIds = new Set(
+      // Extract submitted IDs (parent-level or subAssignments)
+      const submittedIds = new Set(
         submissions.flatMap(s =>
           Array.isArray(s.submittedAnswers)
-            ? s.submittedAnswers.map(ans => ans.subAssignmentId?.toString())
+            ? s.submittedAnswers.map(ans =>
+                ans.subAssignmentId
+                  ? ans.subAssignmentId.toString()
+                  : ans.assignmentId?.toString() // parent-level
+              )
             : []
         )
       );
 
       // Build submitted & not submitted lists
-      const submittedList = allAssignedSubAssignments.filter(sa =>
-        submittedSubAssignmentIds.has(sa._id)
-      );
-
-      const notSubmittedList = allAssignedSubAssignments.filter(sa =>
-        !submittedSubAssignmentIds.has(sa._id)
-      );
-
-      const submittedCount = submittedList.length;
-      const notSubmittedCount = notSubmittedList.length;
+      const submittedList = allAssignedModules.filter(m => submittedIds.has(m._id));
+      const notSubmittedList = allAssignedModules.filter(m => !submittedIds.has(m._id));
 
       return {
         id: student._id,
@@ -196,8 +204,8 @@ exports.getStudentsWithSummary = async (req, res) => {
         remainingAmount: student.remainingAmount,
         enrolledDate: student.enrolledDate,
         assignedAssignmentsCount,
-        submittedCount,
-        notSubmittedCount,
+        submittedCount: submittedList.length,
+        notSubmittedCount: notSubmittedList.length,
         submittedAssignments: submittedList,
         notSubmittedAssignments: notSubmittedList,
         profileImage: student.profileImage
