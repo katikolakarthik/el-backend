@@ -1,226 +1,140 @@
 const Submission = require("../models/Submission");
 const Assignment = require("../models/Assignment");
 
-/* ---------- Helpers ---------- */
-
-function normalizeString(v) {
-  return (v ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
-}
+// Helper: compare strings ignoring case and extra spaces
 function textMatchIgnoreCase(a, b) {
-  return normalizeString(a) === normalizeString(b);
+const strA = (a ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+const strB = (b ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+return strA === strB;
 }
+
+// Helper: compare arrays ignoring order, case, and extra spaces
 function arraysMatchIgnoreOrder(a = [], b = []) {
-  if (!Array.isArray(a) || !Array.isArray(b)) return false;
-  if (a.length !== b.length) return false;
-  const A = a.map(normalizeString).sort();
-  const B = b.map(normalizeString).sort();
-  return A.every((v, i) => v === B[i]);
+if (!Array.isArray(a) || !Array.isArray(b)) return false;
+if (a.length !== b.length) return false;
+const sortedA = a.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
+const sortedB = b.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
+return sortedA.every((val, idx) => val === sortedB[idx]);
 }
-
-// Get a consistent list of "dynamic" questions from either field
-function getDynamicQuestions(target = {}) {
-  const qs = Array.isArray(target.dynamicQuestions)
-    ? target.dynamicQuestions
-    : Array.isArray(target.questions)
-      ? target.questions
-      : [];
-  // Only keep questions that look like MCQ/open-ended type items
-  return qs.map(q => ({
-    questionText: q.questionText || q.question || "",
-    type: q.type || "dynamic",
-    options: q.options || [],
-    // resolve correct answer from common schema variants
-    correctAnswer:
-      q?.answerKey?.correctAnswer ??
-      q?.correctAnswer ??
-      q?.answer ??
-      "",
-  }));
-}
-
-// Pull structured answer key if present on assignment/subAssignment
-function getStructuredAnswerKey(target = {}) {
-  const ak = target.answerKey || {};
-  return {
-    patientName: ak.patientName ?? null,
-    ageOrDob: ak.ageOrDob ?? null,
-    icdCodes: Array.isArray(ak.icdCodes) ? ak.icdCodes : (ak.icdCodes ? [ak.icdCodes] : []),
-    cptCodes: Array.isArray(ak.cptCodes) ? ak.cptCodes : (ak.cptCodes ? [ak.cptCodes] : []),
-  };
-}
-
-/* ---------- Controller ---------- */
 
 exports.submitAssignment = async (req, res) => {
-  try {
-    const { studentId, assignmentId, submittedAnswers } = req.body;
+try {
+const { studentId, assignmentId, submittedAnswers } = req.body;
 
-    if (!studentId || !assignmentId || !Array.isArray(submittedAnswers)) {
-      return res.status(400).json({ error: "studentId, assignmentId and submittedAnswers[] are required" });
-    }
+const assignment = await Assignment.findById(assignmentId);        
+if (!assignment) return res.status(404).json({ error: "Assignment not found" });        
+    
+// Check if submission already exists        
+let submission = await Submission.findOne({ studentId, assignmentId });        
+    
+if (!submission) {        
+  // No submission yet → create fresh        
+  submission = new Submission({        
+    studentId,        
+    assignmentId,        
+    submittedAnswers: [],        
+    totalCorrect: 0,        
+    totalWrong: 0,        
+    overallProgress: 0        
+  });        
+}        
+    
+// Process each submitted submodule independently        
+submittedAnswers.forEach(sub => {        
+  let correctCount = 0, wrongCount = 0;        
+  let target;        
+    
+  if (sub.subAssignmentId) {        
+    target = assignment.subAssignments.id(sub.subAssignmentId);        
+  } else {        
+    target = assignment;        
+  }        
+  if (!target) return;        
+    
+  let gradedDynamicQuestions = [];        
+    
+  if (target.dynamicQuestions?.length) {        
+    target.dynamicQuestions.forEach((q) => {        
+      const submittedQ = (sub.dynamicQuestions || []).find(        
+        sq => textMatchIgnoreCase(sq.questionText, q.questionText)        
+      );        
+    
+      const submittedAnswer = submittedQ?.submittedAnswer || "";        
+      const isCorrect = textMatchIgnoreCase(q.answer, submittedAnswer);        
+    
+      if (isCorrect) correctCount++;        
+      else wrongCount++;        
+    
+      gradedDynamicQuestions.push({        
+        questionText: q.questionText,        
+        type: q.type || "dynamic",        
+        options: q.options || [],        
+        correctAnswer: q.answer,        
+        submittedAnswer,        
+        isCorrect        
+      });        
+    });        
+  } else if (target.answerKey) {        
+    if (textMatchIgnoreCase(target.answerKey.patientName, sub.patientName)) correctCount++;        
+    else wrongCount++;        
+    
+    if (textMatchIgnoreCase(target.answerKey.ageOrDob, sub.ageOrDob)) correctCount++;        
+    else wrongCount++;        
+    
+    if (arraysMatchIgnoreOrder(target.answerKey.icdCodes, sub.icdCodes)) correctCount++;        
+    else wrongCount++;        
+    
+    if (arraysMatchIgnoreOrder(target.answerKey.cptCodes, sub.cptCodes)) correctCount++;        
+    else wrongCount++;        
+  }        
+    
+  const progressPercent = Math.round((correctCount / (correctCount + wrongCount)) * 100) || 0;        
+    
+  const processedAnswer = {        
+    subAssignmentId: sub.subAssignmentId || null,        
+    patientName: sub.patientName || null,        
+    ageOrDob: sub.ageOrDob || null,        
+    icdCodes: sub.icdCodes || [],        
+    cptCodes: sub.cptCodes || [],        
+    notes: sub.notes || null,        
+    dynamicQuestions: gradedDynamicQuestions,        
+    correctCount,        
+    wrongCount,        
+    progressPercent        
+  };        
+    
+  // Update existing submodule answer or add new        
+  const existingIndex = submission.submittedAnswers.findIndex(        
+    ans => String(ans.subAssignmentId) === String(sub.subAssignmentId || null)        
+  );        
+    
+  if (existingIndex >= 0) {        
+    submission.submittedAnswers[existingIndex] = processedAnswer;        
+  } else {        
+    submission.submittedAnswers.push(processedAnswer);        
+  }        
+});        
+    
+// Recalculate totals        
+submission.totalCorrect = submission.submittedAnswers.reduce((sum, a) => sum + a.correctCount, 0);        
+submission.totalWrong = submission.submittedAnswers.reduce((sum, a) => sum + a.wrongCount, 0);        
+submission.overallProgress = Math.round(        
+  (submission.totalCorrect / (submission.totalCorrect + submission.totalWrong)) * 100        
+) || 0;        
+    
+await submission.save();        
+    
+res.json({        
+  success: true,        
+  message: "Assignment submitted/updated successfully",        
+  submission        
+});
 
-    const assignment = await Assignment.findById(assignmentId);
-    if (!assignment) return res.status(404).json({ error: "Assignment not found" });
-
-    // Load or create the submission shell
-    let submission = await Submission.findOne({ studentId, assignmentId });
-    if (!submission) {
-      submission = new Submission({
-        studentId,
-        assignmentId,
-        submittedAnswers: [],
-        totalCorrect: 0,
-        totalWrong: 0,
-        overallProgress: 0,
-      });
-    }
-
-    // Process each incoming sub/parent block independently
-    for (const incoming of submittedAnswers) {
-      const subId = incoming.subAssignmentId || null;
-
-      // Locate target: sub-assignment or the parent assignment
-      const target = subId
-        ? assignment.subAssignments?.id(subId)
-        : assignment;
-
-      if (!target) {
-        // Skip unknown subId gracefully (do not fail the whole request)
-        continue;
-      }
-
-      let correctCount = 0;
-      let wrongCount = 0;
-      const gradedDynamicQuestions = [];
-
-      /* ----- 1) Grade dynamic questions if any exist on the target ----- */
-      const dynQs = getDynamicQuestions(target);
-      if (dynQs.length > 0) {
-        const submittedDynQs = Array.isArray(incoming.dynamicQuestions)
-          ? incoming.dynamicQuestions
-          : [];
-
-        dynQs.forEach((q) => {
-          const submittedQ = submittedDynQs.find(
-            sq => textMatchIgnoreCase(sq.questionText, q.questionText)
-          );
-
-          // Support either string or array submissions; normalize to string compare
-          const submittedAnswer =
-            Array.isArray(submittedQ?.submittedAnswer)
-              ? submittedQ.submittedAnswer.join(",")
-              : (submittedQ?.submittedAnswer ?? "");
-
-          const correctAnswer =
-            Array.isArray(q.correctAnswer)
-              ? q.correctAnswer.join(",")
-              : (q.correctAnswer ?? "");
-
-          const isCorrect = textMatchIgnoreCase(correctAnswer, submittedAnswer);
-
-          if (isCorrect) correctCount++;
-          else wrongCount++;
-
-          gradedDynamicQuestions.push({
-            questionText: q.questionText,
-            type: q.type || "dynamic",
-            options: q.options || [],
-            correctAnswer,
-            submittedAnswer,
-            isCorrect,
-          });
-        });
-      }
-
-      /* ----- 2) Grade structured fields if an answerKey exists ----- */
-      if (target.answerKey) {
-        const key = getStructuredAnswerKey(target);
-
-        // patientName
-        if (key.patientName != null) {
-          if (textMatchIgnoreCase(key.patientName, incoming.patientName)) correctCount++;
-          else wrongCount++;
-        }
-
-        // ageOrDob
-        if (key.ageOrDob != null) {
-          if (textMatchIgnoreCase(key.ageOrDob, incoming.ageOrDob)) correctCount++;
-          else wrongCount++;
-        }
-
-        // icdCodes (ignore order/case/extra spaces)
-        if (key.icdCodes?.length) {
-          const incICD = Array.isArray(incoming.icdCodes)
-            ? incoming.icdCodes
-            : (incoming.icdCodes ? [incoming.icdCodes] : []);
-          if (arraysMatchIgnoreOrder(key.icdCodes, incICD)) correctCount++;
-          else wrongCount++;
-        }
-
-        // cptCodes
-        if (key.cptCodes?.length) {
-          const incCPT = Array.isArray(incoming.cptCodes)
-            ? incoming.cptCodes
-            : (incoming.cptCodes ? [incoming.cptCodes] : []);
-          if (arraysMatchIgnoreOrder(key.cptCodes, incCPT)) correctCount++;
-          else wrongCount++;
-        }
-
-        // notes: stored but never graded (intentionally)
-      }
-
-      // Avoid NaN when there are zero items to grade
-      const totalItems = correctCount + wrongCount;
-      const progressPercent = totalItems > 0 ? Math.round((correctCount / totalItems) * 100) : 0;
-
-      // Canonical stored object
-      const processedAnswer = {
-        subAssignmentId: subId,
-        // structured fields (stored as-is if present)
-        patientName: incoming.patientName ?? null,
-        ageOrDob: incoming.ageOrDob ?? null,
-        icdCodes: Array.isArray(incoming.icdCodes)
-          ? incoming.icdCodes
-          : (incoming.icdCodes ? [incoming.icdCodes] : []),
-        cptCodes: Array.isArray(incoming.cptCodes)
-          ? incoming.cptCodes
-          : (incoming.cptCodes ? [incoming.cptCodes] : []),
-        notes: incoming.notes ?? null, // stored but ungraded
-        // dynamic questions (graded copy)
-        dynamicQuestions: gradedDynamicQuestions,
-
-        correctCount,
-        wrongCount,
-        progressPercent,
-      };
-
-      // Merge/overwrite by subAssignmentId (null = parent)
-      const idx = submission.submittedAnswers.findIndex(
-        a => String(a.subAssignmentId ?? null) === String(subId)
-      );
-      if (idx >= 0) submission.submittedAnswers[idx] = processedAnswer;
-      else submission.submittedAnswers.push(processedAnswer);
-    }
-
-    // Recompute totals
-    submission.totalCorrect = submission.submittedAnswers.reduce((s, a) => s + (a.correctCount || 0), 0);
-    submission.totalWrong   = submission.submittedAnswers.reduce((s, a) => s + (a.wrongCount   || 0), 0);
-    const denom = submission.totalCorrect + submission.totalWrong;
-    submission.overallProgress = denom > 0 ? Math.round((submission.totalCorrect / denom) * 100) : 0;
-
-    await submission.save();
-
-    return res.json({
-      success: true,
-      message: "Assignment submitted/updated successfully",
-      submission,
-    });
-
-  } catch (err) {
-    console.error("submitAssignment error:", err);
-    return res.status(500).json({ error: err.message });
-  }
+} catch (err) {
+res.status(500).json({ error: err.message });
+}
 };
+
 
 
 exports.getStudentAssignmentSummary = async (req, res) => {
