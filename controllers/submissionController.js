@@ -138,6 +138,9 @@ exports.submitAssignment = async (req, res) => {
   }
 };
 
+
+
+
 exports.getStudentAssignmentSummary = async (req, res) => {
   try {
     const { studentId, assignmentId } = req.body;
@@ -145,16 +148,17 @@ exports.getStudentAssignmentSummary = async (req, res) => {
       return res.status(400).json({ error: "Missing studentId or assignmentId" });
     }
 
-    const submission = await Submission.findOne({ studentId, assignmentId }).sort({ submissionDate: -1 });
+    const submission = await Submission.findOne({ studentId, assignmentId }).sort({ submissionDate: -1 });  
     if (!submission) {
       return res.status(404).json({ error: "No submission found for this student and assignment" });
     }
 
-    const assignment = await Assignment.findById(assignmentId);
+    const assignment = await Assignment.findById(assignmentId);  
     if (!assignment) {
       return res.status(404).json({ error: "Assignment not found" });
     }
 
+    // Prepare sub-module summaries with answer key included
     const subModulesSummary = assignment.subAssignments.map(subAssign => {
       const submittedAnswer = submission.submittedAnswers.find(sa =>
         sa.subAssignmentId?.toString() === subAssign._id.toString()
@@ -163,6 +167,8 @@ exports.getStudentAssignmentSummary = async (req, res) => {
       return {
         subAssignmentId: subAssign._id,
         subModuleName: subAssign.subModuleName || "",
+
+        // ✅ Student answers
         enteredValues: submittedAnswer
           ? {
               patientName: submittedAnswer.patientName,
@@ -173,6 +179,17 @@ exports.getStudentAssignmentSummary = async (req, res) => {
               dynamicQuestions: submittedAnswer.dynamicQuestions || []
             }
           : null,
+
+        // ✅ Predefined correct answers
+        answerKey: {
+          patientName: subAssign.answerKey?.patientName || "",
+          ageOrDob: subAssign.answerKey?.ageOrDob || "",
+          icdCodes: subAssign.answerKey?.icdCodes || [],
+          cptCodes: subAssign.answerKey?.cptCodes || [],
+          notes: subAssign.answerKey?.notes || "",
+          dynamicQuestions: subAssign.dynamicQuestions || []
+        },
+
         correctCount: submittedAnswer?.correctCount || 0,
         wrongCount: submittedAnswer?.wrongCount || 0,
         progressPercent: submittedAnswer?.progressPercent || 0
@@ -194,6 +211,16 @@ exports.getStudentAssignmentSummary = async (req, res) => {
               dynamicQuestions: submittedParent.dynamicQuestions || []
             }
           : null,
+
+        answerKey: {
+          patientName: assignment.answerKey?.patientName || "",
+          ageOrDob: assignment.answerKey?.ageOrDob || "",
+          icdCodes: assignment.answerKey?.icdCodes || [],
+          cptCodes: assignment.answerKey?.cptCodes || [],
+          notes: assignment.answerKey?.notes || "",
+          dynamicQuestions: assignment.dynamicQuestions || []
+        },
+
         correctCount: submittedParent?.correctCount || 0,
         wrongCount: submittedParent?.wrongCount || 0,
         progressPercent: submittedParent?.progressPercent || 0
@@ -209,25 +236,8 @@ exports.getStudentAssignmentSummary = async (req, res) => {
       parentSummary,
       subModulesSummary
     });
+
   } catch (error) {
     return res.status(500).json({ error: error.message });
-  }
-};
-
-
-// Add this to your backend routes
-exports.getSubmission = async (req, res) => {
-  try {
-    const { studentId, assignmentId } = req.query;
-    
-    const submission = await Submission.findOne({ studentId, assignmentId });
-    
-    if (!submission) {
-      return res.json({ submission: null });
-    }
-    
-    res.json({ submission });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
   }
 };
