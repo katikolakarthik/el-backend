@@ -403,31 +403,32 @@ exports.getDashboardSummary = async (req, res) => {
     const totalAssignments = await Assignment.countDocuments();
     const totalSubmissions = await Submission.countDocuments();
 
-    const avgProgressData = await Submission.aggregate([
-      {
-        $group: {
-          _id: null,
-          avgProgress: { $avg: "$progressPercent" }
-        }
-      }
-    ]);
+    // Correct aggregation to calculate average progress
+    const avgProgressData = await Submission.aggregate([    
+      {    
+        $group: {    
+          _id: null,    
+          avgProgress: { $avg: "$overallProgress" } // Use overallProgress instead of progressPercent
+        }    
+      }    
+    ]);    
 
-    const averageProgress =
-      avgProgressData.length > 0 && avgProgressData[0].avgProgress != null
-        ? avgProgressData[0].avgProgress
-        : 0;
+    const averageProgress =    
+      avgProgressData.length > 0 && avgProgressData[0].avgProgress != null    
+        ? avgProgressData[0].avgProgress    
+        : 0;    
 
-    res.json({
-      totalStudents,
-      totalAssignments,
-      totalSubmissions,
-      averageProgress: Number(averageProgress.toFixed(2))
+    res.json({    
+      totalStudents,    
+      totalAssignments,    
+      totalSubmissions,    
+      averageProgress: Number(averageProgress.toFixed(2))    
     });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
-
 
 //recent students
 
