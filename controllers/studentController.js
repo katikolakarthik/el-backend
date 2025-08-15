@@ -311,43 +311,56 @@ exports.getStudentProfile = async (req, res) => {
 // ==================== Dashboard Summary ====================
 exports.getDashboardSummary = async (req, res) => {
   try {
-    // Total counts
     const totalStudents = await Student.countDocuments();
     const totalAssignments = await Assignment.countDocuments();
-    
-    // Get only distinct student submissions (count students who submitted at least once)
-    const studentsWithSubmissions = await Submission.distinct('studentId');
-    const totalStudentsSubmitted = studentsWithSubmissions.length;
 
-    // Calculate average progress from all submissions
-    const avgProgressData = await Submission.aggregate([
-      { 
-        $group: { 
-          _id: null,
+    const submissionStats = await Submission.aggregate([
+      {
+        $group: {
+          _id: "$assignmentId",
+          submittedStudents: { $addToSet: "$studentId" },
           avgProgress: { $avg: "$overallProgress" },
-          totalSubmissions: { $sum: 1 }
-        } 
+          avgScore: {
+            $avg: { $divide: ["$totalCorrect", { $add: ["$totalCorrect", "$totalWrong"] }] }
+          }
+        }
+      },
+      {
+        $project: {
+          submittedCount: { $size: "$submittedStudents" },
+          avgProgress: 1,
+          avgScore: { $multiply: ["$avgScore", 100] } // percentage
+        }
       }
     ]);
 
-    const result = {
-      totalStudents,
-      totalStudentsSubmitted, // More meaningful than totalSubmissions
-      totalAssignments,
-      averageProgress: avgProgressData[0]?.avgProgress 
-        ? Number(avgProgressData[0].avgProgress.toFixed(2)) 
-        : 0,
-      totalSubmissions: avgProgressData[0]?.totalSubmissions || 0
-    };
+    let totalSubmittedStudents = 0;
+    let totalAvgProgress = 0;
+    let totalAvgScore = 0;
 
-    res.json(result);
+    submissionStats.forEach((item) => {
+      totalSubmittedStudents += item.submittedCount;
+      totalAvgProgress += item.avgProgress;
+      totalAvgScore += item.avgScore;
+    });
+
+    const averageProgress =
+      submissionStats.length > 0 ? totalAvgProgress / submissionStats.length : 0;
+
+    const averageScore =
+      submissionStats.length > 0 ? totalAvgScore / submissionStats.length : 0;
+
+    res.json({
+      totalStudents,
+      totalAssignments,
+      totalSubmittedStudents,
+      averageProgress: Number(averageProgress.toFixed(2)),
+      averageScore: Number(averageScore.toFixed(2))
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
-
-
-
 
 
 
