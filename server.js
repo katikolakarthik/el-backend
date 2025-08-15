@@ -121,9 +121,8 @@ app.get("/assignments/student/:studentId", assignmentController.getAssignmentsBy
 
 
 
-app.post("/assignments/student", assignmentController.getAssignmentDetailsForStudent);
-
-
+// GET /assignments/:assignmentId/student/:studentId
+app.get("/assignments/:assignmentId/student/:studentId", assignmentController.getAssignmentDetailsForStudent);
 
 
 //individual student summary
