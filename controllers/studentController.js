@@ -140,7 +140,8 @@ exports.updateStudent = async (req, res) => {
 // Get all students with summary info + progress
 exports.getStudentsWithSummary = async (req, res) => {
   try {
-    const students = await Student.find();
+    // ✅ Fetch only users (exclude admins)
+    const students = await Student.find({ role: { $ne: "admin" } });
 
     const result = await Promise.all(
       students.map(async (student) => {
@@ -186,9 +187,8 @@ exports.getStudentsWithSummary = async (req, res) => {
           (sa) => !submittedSubAssignmentIds.has(sa._id)
         );
 
-        // 🔹 Attach progressPercent per submitted sub-assignment
+        // Attach progressPercent per submitted sub-assignment
         submittedList = submittedList.map((sa) => {
-          // find the submission that contains this subAssignment
           const submission = submissions.find((s) =>
             s.submittedAnswers?.some(
               (ans) => ans.subAssignmentId?.toString() === sa._id
@@ -210,7 +210,7 @@ exports.getStudentsWithSummary = async (req, res) => {
         const submittedCount = submittedList.length;
         const notSubmittedCount = notSubmittedList.length;
 
-        // 🔹 Overall progress calculation
+        // Overall progress calculation
         let totalCorrect = 0;
         let totalWrong = 0;
         let overallProgress = 0;
@@ -247,7 +247,6 @@ exports.getStudentsWithSummary = async (req, res) => {
           notSubmittedAssignments: notSubmittedList,
           profileImage: student.profileImage,
 
-          // 🔹 New overall progress
           progress: {
             totalCorrect,
             totalWrong,
@@ -262,6 +261,9 @@ exports.getStudentsWithSummary = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+
 
 
 
