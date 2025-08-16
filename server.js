@@ -132,6 +132,9 @@ app.get('/student/:studentId/summary', studentController.getStudentSummary);
 app.get("/student/submission", submissionController.getSubmission);
 
 
+// ✅ Get full result (parent or sub-assignment) using POST
+router.post("/result", studentController.getAssignmentResult);
+
 
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
