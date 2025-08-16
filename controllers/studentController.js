@@ -528,30 +528,31 @@ exports.getRecentStudents = async (req, res) => {
 
 
 //recent assignments 
-
 exports.getRecentAssignments = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 5;
 
     const assignments = await Assignment.find(
-      {},
-      { moduleName: 1, assignedDate: 1 } // <-- keep _id by default
+      {}, 
+      { moduleName: 1, assignedDate: 1 }
     )
       .sort({ assignedDate: -1 })
-      .limit(limit);
+      .limit(limit)
+      .lean();
 
-    // Optionally rename _id → assignmentId for clarity
-    const formatted = assignments.map((a) => ({
+    // Rename _id → assignmentId
+    const formattedAssignments = assignments.map(a => ({
       assignmentId: a._id,
       moduleName: a.moduleName,
-      assignedDate: a.assignedDate,
+      assignedDate: a.assignedDate
     }));
 
-    res.json(formatted);
+    res.json(formattedAssignments);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
 
   
 exports.getAssignmentResult = async (req, res) => {
