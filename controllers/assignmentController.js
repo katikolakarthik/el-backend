@@ -216,32 +216,50 @@ exports.deleteAllAssignments = async (req, res) => {
 
 
 // Get only parent assignments assigned to a specific student
+// Example update in getAssignmentsByStudentId
 exports.getAssignmentsByStudentId = async (req, res) => {
   try {
     const { studentId } = req.params;
 
     const assignments = await Assignment.find(
       { assignedStudents: studentId },
-      { moduleName: 1, assignedDate: 1 } // projection to only include needed fields
-    )
-      .sort({ assignedDate: -1 }) // latest first
-      .lean();
+      {
+        moduleName: 1,
+        assignedDate: 1,
+        subAssignments: 1,
+        submissions: 1
+      }
+    ).lean();
 
-    if (!assignments || assignments.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "No assignments found for this student"
+    const processedAssignments = assignments.map(ass => {
+      const subStatuses = (ass.subAssignments || []).map(sub => {
+        const submitted = ass.submissions?.some(
+          s => s.studentId.toString() === studentId && s.subAssignmentId?.toString() === sub._id.toString()
+        );
+        return { ...sub, isCompleted: submitted };
       });
-    }
 
-    res.json({
-      success: true,
-      assignments
+      const parentCompleted =
+        subStatuses.length > 0
+          ? subStatuses.every(sub => sub.isCompleted) // parent done only when all sub done
+          : ass.submissions?.some(
+              s => s.studentId.toString() === studentId && !s.subAssignmentId
+            );
+
+      return {
+        ...ass,
+        subAssignments: subStatuses,
+        isCompleted: parentCompleted
+      };
     });
+
+    res.json({ success: true, assignments: processedAssignments });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
+
 
 
 // Get full details of a parent assignment for a specific student
