@@ -30,9 +30,11 @@ exports.getStudents = async (req, res) => {
     const students = await Student.find({ role: { $ne: "admin" } }); // exclude admins
     res.json(students);
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch students" });
+    res.status(500).json({ message: "Error fetching students", error });
   }
 };
+
+
 
 // Delete Student (still works normally)
 exports.deleteStudent = async (req, res) => {
