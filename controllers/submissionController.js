@@ -17,123 +17,136 @@ const sortedB = b.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
 return sortedA.every((val, idx) => val === sortedB[idx]);
 }
 
+
+
 exports.submitAssignment = async (req, res) => {
-try {
-const { studentId, assignmentId, submittedAnswers } = req.body;
+  try {
+    const { studentId, assignmentId, submittedAnswers } = req.body;
 
-const assignment = await Assignment.findById(assignmentId);        
-if (!assignment) return res.status(404).json({ error: "Assignment not found" });        
-    
-// Check if submission already exists        
-let submission = await Submission.findOne({ studentId, assignmentId });        
-    
-if (!submission) {        
-  // No submission yet → create fresh        
-  submission = new Submission({        
-    studentId,        
-    assignmentId,        
-    submittedAnswers: [],        
-    totalCorrect: 0,        
-    totalWrong: 0,        
-    overallProgress: 0        
-  });        
-}        
-    
-// Process each submitted submodule independently        
-submittedAnswers.forEach(sub => {        
-  let correctCount = 0, wrongCount = 0;        
-  let target;        
-    
-  if (sub.subAssignmentId) {        
-    target = assignment.subAssignments.id(sub.subAssignmentId);        
-  } else {        
-    target = assignment;        
-  }        
-  if (!target) return;        
-    
-  let gradedDynamicQuestions = [];        
-    
-  if (target.dynamicQuestions?.length) {        
-    target.dynamicQuestions.forEach((q) => {        
-      const submittedQ = (sub.dynamicQuestions || []).find(        
-        sq => textMatchIgnoreCase(sq.questionText, q.questionText)        
-      );        
-    
-      const submittedAnswer = submittedQ?.submittedAnswer || "";        
-      const isCorrect = textMatchIgnoreCase(q.answer, submittedAnswer);        
-    
-      if (isCorrect) correctCount++;        
-      else wrongCount++;        
-    
-      gradedDynamicQuestions.push({        
-        questionText: q.questionText,        
-        type: q.type || "dynamic",        
-        options: q.options || [],        
-        correctAnswer: q.answer,        
-        submittedAnswer,        
-        isCorrect        
-      });        
-    });        
-  } else if (target.answerKey) {        
-    if (textMatchIgnoreCase(target.answerKey.patientName, sub.patientName)) correctCount++;        
-    else wrongCount++;        
-    
-    if (textMatchIgnoreCase(target.answerKey.ageOrDob, sub.ageOrDob)) correctCount++;        
-    else wrongCount++;        
-    
-    if (arraysMatchIgnoreOrder(target.answerKey.icdCodes, sub.icdCodes)) correctCount++;        
-    else wrongCount++;        
-    
-    if (arraysMatchIgnoreOrder(target.answerKey.cptCodes, sub.cptCodes)) correctCount++;        
-    else wrongCount++;        
-  }        
-    
-  const progressPercent = Math.round((correctCount / (correctCount + wrongCount)) * 100) || 0;        
-    
-  const processedAnswer = {        
-    subAssignmentId: sub.subAssignmentId || null,        
-    patientName: sub.patientName || null,        
-    ageOrDob: sub.ageOrDob || null,        
-    icdCodes: sub.icdCodes || [],        
-    cptCodes: sub.cptCodes || [],        
-    notes: sub.notes || null,        
-    dynamicQuestions: gradedDynamicQuestions,        
-    correctCount,        
-    wrongCount,        
-    progressPercent        
-  };        
-    
-  // Update existing submodule answer or add new        
-  const existingIndex = submission.submittedAnswers.findIndex(        
-    ans => String(ans.subAssignmentId) === String(sub.subAssignmentId || null)        
-  );        
-    
-  if (existingIndex >= 0) {        
-    submission.submittedAnswers[existingIndex] = processedAnswer;        
-  } else {        
-    submission.submittedAnswers.push(processedAnswer);        
-  }        
-});        
-    
-// Recalculate totals        
-submission.totalCorrect = submission.submittedAnswers.reduce((sum, a) => sum + a.correctCount, 0);        
-submission.totalWrong = submission.submittedAnswers.reduce((sum, a) => sum + a.wrongCount, 0);        
-submission.overallProgress = Math.round(        
-  (submission.totalCorrect / (submission.totalCorrect + submission.totalWrong)) * 100        
-) || 0;        
-    
-await submission.save();        
-    
-res.json({        
-  success: true,        
-  message: "Assignment submitted/updated successfully",        
-  submission        
-});
+    const assignment = await Assignment.findById(assignmentId);
+    if (!assignment) return res.status(404).json({ error: "Assignment not found" });
 
-} catch (err) {
-res.status(500).json({ error: err.message });
-}
+    // ✅ Find or create submission record
+    let submission = await Submission.findOne({ studentId, assignmentId });
+    if (!submission) {
+      submission = new Submission({
+        studentId,
+        assignmentId,
+        submittedAnswers: [],
+        totalCorrect: 0,
+        totalWrong: 0,
+        overallProgress: 0
+      });
+    }
+
+    // ✅ Track any duplicate attempts
+    const alreadySubmittedSubs = [];
+
+    // ✅ Process each submitted submodule
+    for (const sub of submittedAnswers) {
+      let correctCount = 0, wrongCount = 0;
+      let target;
+
+      if (sub.subAssignmentId) {
+        target = assignment.subAssignments.id(sub.subAssignmentId);
+      } else {
+        target = assignment; // parent-level assignment
+      }
+      if (!target) continue;
+
+      // ✅ Check if this sub-assignment was already submitted → block overwrite
+      const alreadySubmitted = submission.submittedAnswers.find(
+        ans => String(ans.subAssignmentId) === String(sub.subAssignmentId || null)
+      );
+      if (alreadySubmitted) {
+        alreadySubmittedSubs.push(sub.subAssignmentId || "parent");
+        continue; // skip this one
+      }
+
+      let gradedDynamicQuestions = [];
+
+      if (target.dynamicQuestions?.length) {
+        target.dynamicQuestions.forEach((q) => {
+          const submittedQ = (sub.dynamicQuestions || []).find(
+            sq => textMatchIgnoreCase(sq.questionText, q.questionText)
+          );
+
+          const submittedAnswer = submittedQ?.submittedAnswer || "";
+          const isCorrect = textMatchIgnoreCase(q.answer, submittedAnswer);
+
+          if (isCorrect) correctCount++;
+          else wrongCount++;
+
+          gradedDynamicQuestions.push({
+            questionText: q.questionText,
+            type: q.type || "dynamic",
+            options: q.options || [],
+            correctAnswer: q.answer,
+            submittedAnswer,
+            isCorrect
+          });
+        });
+      } else if (target.answerKey) {
+        if (textMatchIgnoreCase(target.answerKey.patientName, sub.patientName)) correctCount++;
+        else wrongCount++;
+
+        if (textMatchIgnoreCase(target.answerKey.ageOrDob, sub.ageOrDob)) correctCount++;
+        else wrongCount++;
+
+        if (arraysMatchIgnoreOrder(target.answerKey.icdCodes, sub.icdCodes)) correctCount++;
+        else wrongCount++;
+
+        if (arraysMatchIgnoreOrder(target.answerKey.cptCodes, sub.cptCodes)) correctCount++;
+        else wrongCount++;
+      }
+
+      const progressPercent = Math.round((correctCount / (correctCount + wrongCount)) * 100) || 0;
+
+      const processedAnswer = {
+        subAssignmentId: sub.subAssignmentId || null,
+        patientName: sub.patientName || null,
+        ageOrDob: sub.ageOrDob || null,
+        icdCodes: sub.icdCodes || [],
+        cptCodes: sub.cptCodes || [],
+        notes: sub.notes || null,
+        dynamicQuestions: gradedDynamicQuestions,
+        correctCount,
+        wrongCount,
+        progressPercent
+      };
+
+      submission.submittedAnswers.push(processedAnswer);
+    }
+
+    // ✅ If student tried to resubmit already done subs → return message
+    if (alreadySubmittedSubs.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `You have already submitted: ${alreadySubmittedSubs.join(", ")}. Resubmission not allowed.`
+      });
+    }
+
+    // ✅ Recalculate totals
+    submission.totalCorrect = submission.submittedAnswers.reduce((sum, a) => sum + a.correctCount, 0);
+    submission.totalWrong = submission.submittedAnswers.reduce((sum, a) => sum + a.wrongCount, 0);
+    submission.overallProgress = Math.round(
+      (submission.totalCorrect / (submission.totalCorrect + submission.totalWrong)) * 100
+    ) || 0;
+
+    await submission.save();
+
+    res.json({
+      success: true,
+      message: "Assignment submitted successfully",
+      submission
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
+
+
 
 
 
