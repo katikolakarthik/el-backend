@@ -327,37 +327,63 @@ exports.getStudentProfile = async (req, res) => {
     // Step 2: Get all assignments assigned to this student
     const assignments = await Assignment.find({ assignedStudents: studentId });
 
-    // Step 3: Get all submissions (populate only parent assignment name)
+    // Step 3: Get all submissions (with parent assignment + sub answers)
     const submissions = await Submission.find({ studentId })
       .populate({
         path: "assignmentId",
-        select: "moduleName assignedDate" // only parent assignment info
+        select: "moduleName assignedDate subAssignments" // parent assignment
       })
       .sort({ submissionDate: -1 });
 
-    // Step 4: Calculate stats
+    // Step 4: Stats
     const totalAssignments = assignments.length;
-    const completedCount = submissions.length;
+    let completedCount = 0;
+    let totalCorrect = 0;
+    let totalWrong = 0;
+    let totalProgressSum = 0;
+
+    submissions.forEach(sub => {
+      if (sub.submittedAnswers?.length > 0) {
+        completedCount++;
+        totalCorrect += sub.totalCorrect || 0;
+        totalWrong += sub.totalWrong || 0;
+        totalProgressSum += sub.overallProgress || 0;
+      }
+    });
+
     const pendingCount = totalAssignments - completedCount;
+    const averageScore =
+      submissions.length > 0 ? Number((totalProgressSum / submissions.length).toFixed(2)) : 0;
 
-    // Average score
-    let averageScore = 0;
-    if (submissions.length > 0) {
-      const totalProgress = submissions.reduce((sum, s) => sum + (s.overallProgress || 0), 0);
-      averageScore = (totalProgress / submissions.length).toFixed(2);
-    }
-
-    // Step 5: Prepare recent submissions list
+    // Step 5: Group by parent assignmentId → only their sub-assignments
     const recentSubmissions = submissions.slice(0, 5).map(sub => ({
       assignmentId: sub.assignmentId?._id || null,
       moduleName: sub.assignmentId?.moduleName || "Unknown",
       submissionDate: sub.submissionDate,
       overallProgress: sub.overallProgress || 0,
       totalCorrect: sub.totalCorrect || 0,
-      totalWrong: sub.totalWrong || 0
+      totalWrong: sub.totalWrong || 0,
+      subAssignments: sub.submittedAnswers.map(ans => ({
+        subAssignmentId: ans.subAssignmentId,
+        patientName: ans.patientName,
+        ageOrDob: ans.ageOrDob,
+        icdCodes: ans.icdCodes,
+        cptCodes: ans.cptCodes,
+        notes: ans.notes,
+        correctCount: ans.correctCount,
+        wrongCount: ans.wrongCount,
+        progressPercent: ans.progressPercent,
+        dynamicQuestions: ans.dynamicQuestions.map(q => ({
+          questionText: q.questionText,
+          type: q.type,
+          submittedAnswer: q.submittedAnswer,
+          correctAnswer: q.correctAnswer,
+          isCorrect: q.isCorrect
+        }))
+      }))
     }));
 
-    // Step 6: Send response
+    // Step 6: Response
     res.json({
       id: student._id,
       name: student.name,
@@ -367,16 +393,17 @@ exports.getStudentProfile = async (req, res) => {
       enrolledDate: student.enrolledDate,
       profileImage: student.profileImage,
 
-      // Dashboard stats
+      // Stats
       totalAssignments,
       completedCount,
       pendingCount,
-      averageScore: Number(averageScore),
-
-      courseProgress: averageScore, // you can adjust if course progress logic is different
+      totalCorrect,
+      totalWrong,
+      averageScore,
+      courseProgress: averageScore,
       assignmentCompletion: `${completedCount}/${totalAssignments}`,
 
-      // Only parent assignment info in recent submissions
+      // Parent assignment → only its sub-assignment submissions
       recentSubmissions
     });
 
@@ -385,9 +412,6 @@ exports.getStudentProfile = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
-
-
 
 
 
