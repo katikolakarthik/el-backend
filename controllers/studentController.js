@@ -544,4 +544,153 @@ exports.getRecentAssignments = async (req, res) => {
 };
 
 
+exports.getAssignmentResult = async (req, res) => {
+  try {
+    const { studentId, assignmentId } = req.body;
+    if (!studentId || !assignmentId) {
+      return res.status(400).json({ error: "studentId and assignmentId are required" });
+    }
 
+    // Get student & assignment
+    const student = await Student.findById(studentId);
+    if (!student) return res.status(404).json({ error: "Student not found" });
+
+    const assignment = await Assignment.findOne({
+      $or: [
+        { _id: assignmentId },
+        { "subAssignments._id": assignmentId }
+      ]
+    });
+
+    if (!assignment) return res.status(404).json({ error: "Assignment not found" });
+
+    // Get submission
+    const submission = await Submission.findOne({
+      studentId,
+      assignmentId: assignment._id
+    });
+
+    if (!submission) {
+      return res.status(404).json({ error: "No submission found for this student" });
+    }
+
+    let result;
+
+    // ✅ Case 1: Parent assignment requested
+    if (assignment._id.toString() === assignmentId) {
+      result = {
+        type: "parent",
+        moduleName: assignment.moduleName,
+        submitted: submission.submittedAnswers.map(sa => ({
+          subAssignmentId: sa.subAssignmentId,
+          patientName: {
+            submitted: sa.patientName,
+            correct: assignment.answerKey?.patientName || null,
+            isCorrect: sa.patientName === assignment.answerKey?.patientName
+          },
+          ageOrDob: {
+            submitted: sa.ageOrDob,
+            correct: assignment.answerKey?.ageOrDob || null,
+            isCorrect: sa.ageOrDob === assignment.answerKey?.ageOrDob
+          },
+          icdCodes: {
+            submitted: sa.icdCodes,
+            correct: assignment.answerKey?.icdCodes || [],
+            isCorrect: JSON.stringify(sa.icdCodes) === JSON.stringify(assignment.answerKey?.icdCodes || [])
+          },
+          cptCodes: {
+            submitted: sa.cptCodes,
+            correct: assignment.answerKey?.cptCodes || [],
+            isCorrect: JSON.stringify(sa.cptCodes) === JSON.stringify(assignment.answerKey?.cptCodes || [])
+          },
+          notes: {
+            submitted: sa.notes,
+            correct: assignment.answerKey?.notes || null,
+            isCorrect: sa.notes === assignment.answerKey?.notes
+          },
+          dynamicQuestions: sa.dynamicQuestions.map((dq, i) => ({
+            questionText: dq.questionText,
+            submittedAnswer: dq.submittedAnswer,
+            correctAnswer: dq.correctAnswer,
+            isCorrect: dq.isCorrect
+          })),
+          correctCount: sa.correctCount,
+          wrongCount: sa.wrongCount,
+          progressPercent: sa.progressPercent
+        })),
+        totalCorrect: submission.totalCorrect,
+        totalWrong: submission.totalWrong,
+        overallProgress: submission.overallProgress
+      };
+    }
+
+    // ✅ Case 2: Sub-assignment requested
+    else {
+      const subAssignment = assignment.subAssignments.find(
+        s => s._id.toString() === assignmentId
+      );
+
+      const submitted = submission.submittedAnswers.find(
+        s => s.subAssignmentId.toString() === assignmentId
+      );
+
+      if (!subAssignment || !submitted) {
+        return res.status(404).json({ error: "Sub-assignment submission not found" });
+      }
+
+      result = {
+        type: "sub",
+        moduleName: assignment.moduleName,
+        subModuleName: subAssignment.subModuleName,
+        submitted: {
+          patientName: {
+            submitted: submitted.patientName,
+            correct: subAssignment.answerKey?.patientName || null,
+            isCorrect: submitted.patientName === subAssignment.answerKey?.patientName
+          },
+          ageOrDob: {
+            submitted: submitted.ageOrDob,
+            correct: subAssignment.answerKey?.ageOrDob || null,
+            isCorrect: submitted.ageOrDob === subAssignment.answerKey?.ageOrDob
+          },
+          icdCodes: {
+            submitted: submitted.icdCodes,
+            correct: subAssignment.answerKey?.icdCodes || [],
+            isCorrect: JSON.stringify(submitted.icdCodes) === JSON.stringify(subAssignment.answerKey?.icdCodes || [])
+          },
+          cptCodes: {
+            submitted: submitted.cptCodes,
+            correct: subAssignment.answerKey?.cptCodes || [],
+            isCorrect: JSON.stringify(submitted.cptCodes) === JSON.stringify(subAssignment.answerKey?.cptCodes || [])
+          },
+          notes: {
+            submitted: submitted.notes,
+            correct: subAssignment.answerKey?.notes || null,
+            isCorrect: submitted.notes === subAssignment.answerKey?.notes
+          },
+          dynamicQuestions: submitted.dynamicQuestions.map((dq, i) => {
+            const correctQ = subAssignment.dynamicQuestions[i];
+            return {
+              questionText: dq.questionText,
+              submittedAnswer: dq.submittedAnswer,
+              correctAnswer: correctQ?.answer,
+              isCorrect: dq.isCorrect
+            };
+          }),
+          correctCount: submitted.correctCount,
+          wrongCount: submitted.wrongCount,
+          progressPercent: submitted.progressPercent
+        }
+      };
+    }
+
+    res.json({
+      student: { id: student._id, name: student.name, courseName: student.courseName },
+      result
+    });
+
+  } catch (err) {
+    console.error("Error in getAssignmentResult:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
