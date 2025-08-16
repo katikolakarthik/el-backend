@@ -546,10 +546,9 @@ exports.getRecentAssignments = async (req, res) => {
 
 
   
-
 exports.getAssignmentResult = async (req, res) => {
   try {
-    const { studentId, assignmentId } = req.body; // <-- Now from body
+    const { studentId, assignmentId } = req.body; // from body
 
     if (!studentId || !assignmentId) {
       return res.status(400).json({ error: "studentId and assignmentId are required in body" });
@@ -561,7 +560,7 @@ exports.getAssignmentResult = async (req, res) => {
       return res.status(404).json({ error: "Assignment not found" });
     }
 
-    // 2. Fetch student's submission for this assignment
+    // 2. Fetch student's submission
     const submission = await Submission.findOne({
       studentId,
       assignmentId,
@@ -572,7 +571,7 @@ exports.getAssignmentResult = async (req, res) => {
 
     let result;
 
-    // 3. If assignment has sub-assignments
+    // ---------- CASE 1: MULTI (has sub-assignments) ----------
     if (assignment.subAssignments && assignment.subAssignments.length > 0) {
       result = assignment.subAssignments.map((sub) => {
         const studentSub = submission.submittedAnswers.find(
@@ -591,29 +590,59 @@ exports.getAssignmentResult = async (req, res) => {
           submitted: studentSub || null,
         };
       });
-    } else {
-      // 4. Single assignment (no sub-assignments)
+    } 
+    // ---------- CASE 2: SINGLE ----------
+    else {
       result = {
         moduleName: assignment.moduleName,
         assignmentPdf: assignment.assignmentPdf,
-
-        // Correct keys
         correctAnswerKey: assignment.answerKey,
         correctDynamicQuestions: assignment.dynamicQuestions,
-
-        // Student's submission
         submitted: submission.submittedAnswers[0] || null,
       };
     }
 
+    // ---------- GLOBAL TOTALS ----------
+    let totalCorrect = 0;
+    let totalWrong = 0;
+    let totalProgress = 0;
+    let count = 0;
+
+    if (Array.isArray(result)) {
+      // multi
+      result.forEach((r) => {
+        if (r.submitted) {
+          totalCorrect += r.submitted.correctCount || 0;
+          totalWrong += r.submitted.wrongCount || 0;
+          totalProgress += r.submitted.progressPercent || 0;
+          count++;
+        }
+      });
+    } else {
+      // single
+      if (result.submitted) {
+        totalCorrect = result.submitted.correctCount || 0;
+        totalWrong = result.submitted.wrongCount || 0;
+        totalProgress = result.submitted.progressPercent || 0;
+        count = 1;
+      }
+    }
+
+    const overallProgress = count > 0 ? Math.round(totalProgress / count) : 0;
+
+    // ---------- RESPONSE ----------
     res.json({
       assignmentId,
       studentId,
       assignmentType: assignment.subAssignments.length > 0 ? "multi" : "single",
+      totalCorrect,
+      totalWrong,
+      overallProgress,
       data: result,
     });
+
   } catch (err) {
-    console.error("Error in getAssignmentWithAnswers:", err);
+    console.error("Error in getAssignmentResult:", err);
     res.status(500).json({ error: err.message });
   }
 };
