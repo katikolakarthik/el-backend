@@ -533,17 +533,25 @@ exports.getRecentAssignments = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 5;
 
-    const assignments = await Assignment.find({}, { moduleName: 1, assignedDate: 1, _id: 0 })
+    const assignments = await Assignment.find(
+      {},
+      { moduleName: 1, assignedDate: 1 } // <-- keep _id by default
+    )
       .sort({ assignedDate: -1 })
       .limit(limit);
 
-    res.json(assignments);
+    // Optionally rename _id → assignmentId for clarity
+    const formatted = assignments.map((a) => ({
+      assignmentId: a._id,
+      moduleName: a.moduleName,
+      assignedDate: a.assignedDate,
+    }));
+
+    res.json(formatted);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
-
-
 
   
 exports.getAssignmentResult = async (req, res) => {
