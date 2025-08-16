@@ -1,5 +1,7 @@
 const Assignment = require("../models/Assignment");
 
+const Submission = require("../models/Submission");
+
 
 exports.addAssignment = async (req, res) => {
   try {
@@ -217,34 +219,45 @@ exports.deleteAllAssignments = async (req, res) => {
 
 // Get only parent assignments assigned to a specific student
 // Example update in getAssignmentsByStudentId
+
+
 exports.getAssignmentsByStudentId = async (req, res) => {
   try {
     const { studentId } = req.params;
 
+    // 1. Get all assignments for this student
     const assignments = await Assignment.find(
       { assignedStudents: studentId },
       {
         moduleName: 1,
         assignedDate: 1,
-        subAssignments: 1,
-        submissions: 1
+        subAssignments: 1
       }
     ).lean();
 
+    // 2. Get all submissions by this student
+    const submissions = await Submission.find({ studentId }).lean();
+
     const processedAssignments = assignments.map(ass => {
+      // find this student's submission for the assignment
+      const studentSubmission = submissions.find(
+        sub => sub.assignmentId.toString() === ass._id.toString()
+      );
+
       const subStatuses = (ass.subAssignments || []).map(sub => {
-        const submitted = ass.submissions?.some(
-          s => s.studentId.toString() === studentId && s.subAssignmentId?.toString() === sub._id.toString()
+        const submittedSub = studentSubmission?.submittedAnswers?.find(
+          ans => ans.subAssignmentId?.toString() === sub._id.toString()
         );
-        return { ...sub, isCompleted: submitted };
+        return {
+          ...sub,
+          isCompleted: !!submittedSub
+        };
       });
 
       const parentCompleted =
         subStatuses.length > 0
-          ? subStatuses.every(sub => sub.isCompleted) // parent done only when all sub done
-          : ass.submissions?.some(
-              s => s.studentId.toString() === studentId && !s.subAssignmentId
-            );
+          ? subStatuses.every(sub => sub.isCompleted)
+          : !!studentSubmission; // if no subAssignments, check if any parent-level submission exists
 
       return {
         ...ass,
@@ -258,7 +271,6 @@ exports.getAssignmentsByStudentId = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 
 
 
