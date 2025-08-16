@@ -137,79 +137,131 @@ exports.updateStudent = async (req, res) => {
 
 
 
-// Get all students with summary info (can be paginated)
+// Get all students with summary info + progress
 exports.getStudentsWithSummary = async (req, res) => {
   try {
     const students = await Student.find();
 
-    const result = await Promise.all(students.map(async (student) => {
-      // Get all assignments assigned to this student
-      const assignedAssignments = await Assignment.find({
-        assignedStudents: student._id
-      }).lean();
+    const result = await Promise.all(
+      students.map(async (student) => {
+        // Get all assignments assigned to this student
+        const assignedAssignments = await Assignment.find({
+          assignedStudents: student._id,
+        }).lean();
 
-      // Flatten subAssignments with assignment details
-      const allAssignedSubAssignments = assignedAssignments.flatMap(a =>
-        Array.isArray(a.subAssignments)
-          ? a.subAssignments.map(sa => ({
-              _id: sa._id.toString(),
-              subModuleName: sa.subModuleName,
-              assignmentId: a._id.toString(),
-              moduleName: a.moduleName
-            }))
-          : []
-      );
-
-      const assignedAssignmentsCount = allAssignedSubAssignments.length;
-
-      // Get submissions for this student
-      const submissions = await Submission.find({
-        studentId: student._id
-      }).lean();
-
-      // Extract submitted subAssignmentIds safely
-      const submittedSubAssignmentIds = new Set(
-        submissions.flatMap(s =>
-          Array.isArray(s.submittedAnswers)
-            ? s.submittedAnswers.map(ans => ans.subAssignmentId?.toString())
+        // Flatten subAssignments with assignment details
+        const allAssignedSubAssignments = assignedAssignments.flatMap((a) =>
+          Array.isArray(a.subAssignments)
+            ? a.subAssignments.map((sa) => ({
+                _id: sa._id.toString(),
+                subModuleName: sa.subModuleName,
+                assignmentId: a._id.toString(),
+                moduleName: a.moduleName,
+              }))
             : []
-        )
-      );
+        );
 
-      // Build submitted & not submitted lists
-      const submittedList = allAssignedSubAssignments.filter(sa =>
-        submittedSubAssignmentIds.has(sa._id)
-      );
+        const assignedAssignmentsCount = allAssignedSubAssignments.length;
 
-      const notSubmittedList = allAssignedSubAssignments.filter(sa =>
-        !submittedSubAssignmentIds.has(sa._id)
-      );
+        // Get submissions for this student
+        const submissions = await Submission.find({
+          studentId: student._id,
+        }).lean();
 
-      const submittedCount = submittedList.length;
-      const notSubmittedCount = notSubmittedList.length;
+        // Extract submitted subAssignmentIds
+        const submittedSubAssignmentIds = new Set(
+          submissions.flatMap((s) =>
+            Array.isArray(s.submittedAnswers)
+              ? s.submittedAnswers.map((ans) => ans.subAssignmentId?.toString())
+              : []
+          )
+        );
 
-      return {
-        id: student._id,
-        name: student.name,
-        courseName: student.courseName,
-        paidAmount: student.paidAmount,
-        remainingAmount: student.remainingAmount,
-        enrolledDate: student.enrolledDate,
-        assignedAssignmentsCount,
-        submittedCount,
-        notSubmittedCount,
-        submittedAssignments: submittedList,
-        notSubmittedAssignments: notSubmittedList,
-        profileImage: student.profileImage
-      };
-    }));
+        // Build submitted & not submitted lists
+        let submittedList = allAssignedSubAssignments.filter((sa) =>
+          submittedSubAssignmentIds.has(sa._id)
+        );
+
+        const notSubmittedList = allAssignedSubAssignments.filter(
+          (sa) => !submittedSubAssignmentIds.has(sa._id)
+        );
+
+        // 🔹 Attach progressPercent per submitted sub-assignment
+        submittedList = submittedList.map((sa) => {
+          // find the submission that contains this subAssignment
+          const submission = submissions.find((s) =>
+            s.submittedAnswers?.some(
+              (ans) => ans.subAssignmentId?.toString() === sa._id
+            )
+          );
+
+          const subAnswer = submission?.submittedAnswers?.find(
+            (ans) => ans.subAssignmentId?.toString() === sa._id
+          );
+
+          return {
+            ...sa,
+            progressPercent: subAnswer?.progressPercent || 0,
+            correctCount: subAnswer?.correctCount || 0,
+            wrongCount: subAnswer?.wrongCount || 0,
+          };
+        });
+
+        const submittedCount = submittedList.length;
+        const notSubmittedCount = notSubmittedList.length;
+
+        // 🔹 Overall progress calculation
+        let totalCorrect = 0;
+        let totalWrong = 0;
+        let overallProgress = 0;
+
+        if (submissions.length > 0) {
+          totalCorrect = submissions.reduce(
+            (sum, s) => sum + (s.totalCorrect || 0),
+            0
+          );
+          totalWrong = submissions.reduce(
+            (sum, s) => sum + (s.totalWrong || 0),
+            0
+          );
+
+          const totalProgress = submissions.reduce(
+            (sum, s) => sum + (s.overallProgress || 0),
+            0
+          );
+          overallProgress = Math.round(totalProgress / submissions.length);
+        }
+
+        return {
+          id: student._id,
+          name: student.name,
+          courseName: student.courseName,
+          paidAmount: student.paidAmount,
+          remainingAmount: student.remainingAmount,
+          enrolledDate: student.enrolledDate,
+
+          assignedAssignmentsCount,
+          submittedCount,
+          notSubmittedCount,
+          submittedAssignments: submittedList,
+          notSubmittedAssignments: notSubmittedList,
+          profileImage: student.profileImage,
+
+          // 🔹 New overall progress
+          progress: {
+            totalCorrect,
+            totalWrong,
+            overallProgress, // percentage (0–100)
+          },
+        };
+      })
+    );
 
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
-
 
 
 
