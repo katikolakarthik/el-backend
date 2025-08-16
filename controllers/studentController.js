@@ -24,9 +24,24 @@ exports.addStudent = async (req, res) => {
   }
 };
 
+// Get Students (excluding admins)
 exports.getStudents = async (req, res) => {
-  const students = await Student.find();
-  res.json(students);
+  try {
+    const students = await Student.find({ role: { $ne: "admin" } }); // exclude admins
+    res.json(students);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch students" });
+  }
+};
+
+// Delete Student (still works normally)
+exports.deleteStudent = async (req, res) => {
+  try {
+    await Student.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: "Student deleted" });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to delete student" });
+  }
 };
 
 exports.deleteStudent = async (req, res) => {
