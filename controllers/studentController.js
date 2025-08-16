@@ -506,13 +506,16 @@ exports.getDashboardSummary = async (req, res) => {
 
 
 //recent students
-
 exports.getRecentStudents = async (req, res) => {
   try {
     // Get latest students (limit can be passed as query ?limit=5)
     const limit = parseInt(req.query.limit) || 5;
 
-    const students = await Student.find({}, { name: 1, courseName: 1, _id: 0 })
+    // ✅ Exclude admins
+    const students = await Student.find(
+      { role: { $ne: "admin" } }, // filter condition
+      { name: 1, courseName: 1, _id: 0 }
+    )
       .sort({ enrolledDate: -1 })
       .limit(limit);
 
@@ -521,6 +524,7 @@ exports.getRecentStudents = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 
 //recent assignments 
