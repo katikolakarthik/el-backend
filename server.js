@@ -16,7 +16,8 @@ app.use(
     origin: function (origin, callback) {
       const allowedOrigins = [
         "https://el-front-umber.vercel.app",
-        "https://el-front.vercel.app"
+        "https://el-front.vercel.app",
+        "http://localhost:5173"
       ];
       if (!origin || allowedOrigins.indexOf(origin) !== -1) {
         callback(null, true);
