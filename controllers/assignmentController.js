@@ -1,6 +1,6 @@
 const Assignment = require("../models/Assignment");
-
 const Submission = require("../models/Submission");
+const mongoose = require("mongoose");
 
 
 
@@ -218,6 +218,108 @@ exports.deleteAllAssignments = async (req, res) => {
       deletedCount: result.deletedCount
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Update assignment module
+exports.updateAssignment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { moduleName, assignedStudents, subAssignments } = req.body;
+    const files = req.files?.assignmentPdf || [];
+
+    // Find the existing assignment
+    const existingAssignment = await Assignment.findById(id);
+    if (!existingAssignment) {
+      return res.status(404).json({ error: "Assignment not found" });
+    }
+
+    // Prepare update data
+    let updateData = {
+      moduleName,
+      assignedStudents: assignedStudents ? assignedStudents.split(",") : []
+    };
+
+    if (subAssignments) {
+      const parsed = JSON.parse(subAssignments);
+
+      // Helper: Format dynamic questions (MCQ or text)
+      const formatDynamic = (questions) => questions.map(q => ({
+        _id: q._id || new mongoose.Types.ObjectId(), // Preserve existing ID or create new one
+        questionText: q.questionText,
+        options: q.options || [],
+        answer: q.answer
+      }));
+
+      // Helper: Format predefined answers
+      const formatPredefined = (sub) => ({
+        patientName: sub.answerPatientName || null,
+        ageOrDob: sub.answerAgeOrDob || null,
+        icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
+        cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
+        notes: sub.answerNotes || null
+      });
+
+      // Single assignment → store at parent level
+      if (parsed.length === 1) {
+        const single = parsed[0];
+        
+        // Only update PDF if a new one is provided
+        if (files[0]) {
+          updateData.assignmentPdf = files[0].path || files[0].url || files[0].secure_url || null;
+        }
+
+        if (single.isDynamic) {
+          updateData.dynamicQuestions = formatDynamic(single.questions);
+          updateData.answerKey = null; // Clear predefined answers
+        } else {
+          updateData.answerKey = formatPredefined(single);
+          updateData.dynamicQuestions = []; // Clear dynamic questions
+        }
+      }
+      // Multiple sub-assignments
+      else {
+        updateData.subAssignments = parsed.map((sub, index) => {
+          const pdfPath = files[index]
+            ? files[index].path || files[index].url || files[index].secure_url || null
+            : null;
+
+          if (sub.isDynamic) {
+            return {
+              _id: sub._id || new mongoose.Types.ObjectId(), // Preserve existing ID or create new one
+              subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
+              dynamicQuestions: formatDynamic(sub.questions),
+              assignmentPdf: pdfPath || sub.assignmentPdf, // Keep existing PDF if no new one
+              answerKey: null // Clear predefined answers
+            };
+          } else {
+            return {
+              _id: sub._id || new mongoose.Types.ObjectId(), // Preserve existing ID or create new one
+              subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
+              assignmentPdf: pdfPath || sub.assignmentPdf, // Keep existing PDF if no new one
+              answerKey: formatPredefined(sub),
+              dynamicQuestions: [] // Clear dynamic questions
+            };
+          }
+        });
+      }
+    }
+
+    // Update the assignment
+    const updatedAssignment = await Assignment.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true, runValidators: true }
+    ).populate("assignedStudents");
+
+    res.json({
+      success: true,
+      message: "Assignment updated successfully",
+      assignment: updatedAssignment
+    });
+  } catch (err) {
+    console.error("Update assignment error:", err);
     res.status(500).json({ error: err.message });
   }
 };

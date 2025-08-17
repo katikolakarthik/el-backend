@@ -16,6 +16,7 @@ app.use(
     origin: function (origin, callback) {
       const allowedOrigins = [
         "http://localhost:5173",
+        "http://localhost:3000",
         "https://el-front-umber.vercel.app"
       ];
       if (!origin || allowedOrigins.indexOf(origin) !== -1) {
@@ -76,6 +77,13 @@ app.delete("/admin/assignments", assignmentController.deleteAllAssignments);
 app.delete(
   "/admin/assignments/:moduleId/sub/:subId",
   assignmentController.deleteSubAssignment
+);
+
+// Update assignment module
+app.put(
+  "/admin/assignments/:id",
+  upload.fields([{ name: "assignmentPdf", maxCount: 100 }]),
+  assignmentController.updateAssignment
 );
 
 
