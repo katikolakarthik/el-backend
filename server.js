@@ -136,6 +136,15 @@ app.get("/student/submission", submissionController.getSubmission);
 app.post("/result", studentController.getAssignmentResult);
 
 
+// Edit Assignment Module (update single or multi-sub-assignments)
+app.put(
+  "/admin/edit-assignment/:assignmentId",
+  upload.fields([{ name: "assignmentPdf", maxCount: 100 }]),
+  assignmentController.editAssignment
+);
+
+
+
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
 module.exports = app;
