@@ -3,6 +3,101 @@ const Assignment = require("../models/Assignment");
 const Submission = require("../models/Submission");
 
 
+
+exports.editAssignment = async (req, res) => {
+  try {
+    const { assignmentId, moduleName, assignedStudents, subAssignments } = req.body;
+    const files = req.files?.assignmentPdf || [];
+
+    let assignment = await Assignment.findById(assignmentId);
+    if (!assignment) {
+      return res.status(404).json({ error: "Assignment not found" });
+    }
+
+    // --- Update base fields ---
+    if (moduleName) assignment.moduleName = moduleName;
+    if (assignedStudents) {
+      assignment.assignedStudents = assignedStudents.split(",");
+    }
+
+    if (subAssignments) {
+      const parsed = JSON.parse(subAssignments);
+
+      // Helper: Format dynamic questions (MCQ or text)
+      const formatDynamic = (questions) => questions.map(q => ({
+        questionText: q.questionText,
+        options: q.options || [],
+        answer: q.answer
+      }));
+
+      // Helper: Format predefined answers
+      const formatPredefined = (sub) => ({
+        patientName: sub.answerPatientName || null,
+        ageOrDob: sub.answerAgeOrDob || null,
+        icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
+        cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
+        notes: sub.answerNotes || null
+      });
+
+      // --- Single assignment (stored at parent level) ---
+      if (parsed.length === 1) {
+        const single = parsed[0];
+        assignment.assignmentPdf = files[0]
+          ? files[0].path || files[0].url || files[0].secure_url || null
+          : assignment.assignmentPdf; // keep old if not updated
+
+        if (single.isDynamic) {
+          assignment.dynamicQuestions = formatDynamic(single.questions);
+          assignment.answerKey = undefined; // clear predefined
+        } else {
+          assignment.answerKey = formatPredefined(single);
+          assignment.dynamicQuestions = undefined; // clear dynamic
+        }
+
+        assignment.subAssignments = []; // clear sub-assignments if switching to single
+      }
+
+      // --- Multiple sub-assignments ---
+      else {
+        assignment.subAssignments = parsed.map((sub, index) => {
+          const pdfPath = files[index]
+            ? files[index].path || files[index].url || files[index].secure_url || null
+            : (assignment.subAssignments[index]?.assignmentPdf || null); // keep old if not updated
+
+          if (sub.isDynamic) {
+            return {
+              subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
+              dynamicQuestions: formatDynamic(sub.questions),
+              assignmentPdf: pdfPath
+            };
+          } else {
+            return {
+              subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
+              assignmentPdf: pdfPath,
+              answerKey: formatPredefined(sub)
+            };
+          }
+        });
+
+        // clear single assignment fields if switching to multi
+        assignment.assignmentPdf = undefined;
+        assignment.dynamicQuestions = undefined;
+        assignment.answerKey = undefined;
+      }
+    }
+
+    await assignment.save();
+
+    res.json({
+      success: true,
+      message: "Assignment updated successfully",
+      assignment
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 exports.addAssignment = async (req, res) => {
   try {
     const { moduleName, assignedStudents, subAssignments } = req.body;
