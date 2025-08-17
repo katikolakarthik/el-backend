@@ -136,12 +136,6 @@ app.get("/student/submission", submissionController.getSubmission);
 app.post("/result", studentController.getAssignmentResult);
 
 
-// Edit Assignment Module (with sub-assignments)
-app.put(
-  "/admin/edit-assignment",
-  upload.fields([{ name: "assignmentPdf", maxCount: 100 }]),
-  assignmentController.editAssignment
-);
 
 
 
