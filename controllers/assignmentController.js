@@ -7,8 +7,14 @@ const Submission = require("../models/Submission");
 
 exports.editAssignment = async (req, res) => {
   try {
-    const { assignmentId, moduleName, assignedStudents, subAssignments } = req.body;
+    // ✅ Accept assignmentId from params OR body
+    const assignmentId = req.params.assignmentId || req.body.assignmentId;
+    const { moduleName, assignedStudents, subAssignments } = req.body;
     const files = req.files?.assignmentPdf || [];
+
+    if (!assignmentId) {
+      return res.status(400).json({ error: "assignmentId is required (in params or body)" });
+    }
 
     let assignment = await Assignment.findById(assignmentId);
     if (!assignment) {
@@ -106,8 +112,6 @@ exports.editAssignment = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
-
 
 exports.addAssignment = async (req, res) => {
   try {
