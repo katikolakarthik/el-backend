@@ -3,8 +3,6 @@ const Submission = require("../models/Submission");
 const Assignment = require("../models/Assignment");
 
 
-// put this near the top of the controller file
-const EXCLUDED_ROLES = ["admin", "subadmin"];
 
 // Delete Admin
 exports.deleteAdmin = async (req, res) => {
