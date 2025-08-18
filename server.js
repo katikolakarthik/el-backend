@@ -145,16 +145,6 @@ app.post("/result", studentController.getAssignmentResult);
 
 
 
-// Admin routes
-app.post("/admin/add-subadmin", studentController.addSubadmin);
-
-app.put("/admin/subadmin/:id", studentController.updateSubadmin);
-
-app.delete("/admin/subadmin/:id",  studentController.deleteSubadmin);
-
-app.get("/admin/subadmins", studentController.getAllSubadmins);
-
-
 
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
