@@ -211,133 +211,6 @@ exports.updateStudent = async (req, res) => {
 
 
 // Get all students with summary info + progress
-exports.getStudentsWithSummary = async (req, res) => {
-  try {
-    // ✅ Fetch only non-admin/non-subadmin users
-    const students = await Student.find({ role: { $nin: EXCLUDED_ROLES } });
-
-    const result = await Promise.all(
-      students.map(async (student) => {
-        // Get all assignments assigned to this student
-        const assignedAssignments = await Assignment.find({
-          assignedStudents: student._id,
-        }).lean();
-
-        // Flatten subAssignments with assignment details
-        const allAssignedSubAssignments = assignedAssignments.flatMap((a) =>
-          Array.isArray(a.subAssignments)
-            ? a.subAssignments.map((sa) => ({
-                _id: sa._id?.toString(),
-                subModuleName: sa.subModuleName,
-                assignmentId: a._id?.toString(),
-                moduleName: a.moduleName,
-              }))
-            : []
-        );
-
-        const assignedAssignmentsCount = allAssignedSubAssignments.length;
-
-        // Get submissions for this student
-        const submissions = await Submission.find({
-          studentId: student._id,
-        }).lean();
-
-        // Extract submitted subAssignmentIds
-        const submittedSubAssignmentIds = new Set(
-          submissions.flatMap((s) =>
-            Array.isArray(s.submittedAnswers)
-              ? s.submittedAnswers
-                  .map((ans) => ans?.subAssignmentId?.toString())
-                  .filter(Boolean)
-              : []
-          )
-        );
-
-        // Build submitted & not submitted lists
-        let submittedList = allAssignedSubAssignments.filter((sa) =>
-          submittedSubAssignmentIds.has(sa._id)
-        );
-
-        const notSubmittedList = allAssignedSubAssignments.filter(
-          (sa) => !submittedSubAssignmentIds.has(sa._id)
-        );
-
-        // Attach progressPercent per submitted sub-assignment
-        submittedList = submittedList.map((sa) => {
-          const submission = submissions.find((s) =>
-            s.submittedAnswers?.some(
-              (ans) => ans?.subAssignmentId?.toString() === sa._id
-            )
-          );
-
-          const subAnswer = submission?.submittedAnswers?.find(
-            (ans) => ans?.subAssignmentId?.toString() === sa._id
-          );
-
-          return {
-            ...sa,
-            progressPercent: subAnswer?.progressPercent ?? 0,
-            correctCount: subAnswer?.correctCount ?? 0,
-            wrongCount: subAnswer?.wrongCount ?? 0,
-          };
-        });
-
-        const submittedCount = submittedList.length;
-        const notSubmittedCount = notSubmittedList.length;
-
-        // Overall progress calculation
-        let totalCorrect = 0;
-        let totalWrong = 0;
-        let overallProgress = 0;
-
-        if (submissions.length > 0) {
-          totalCorrect = submissions.reduce(
-            (sum, s) => sum + (s.totalCorrect || 0),
-            0
-          );
-          totalWrong = submissions.reduce(
-            (sum, s) => sum + (s.totalWrong || 0),
-            0
-          );
-
-          const totalProgress = submissions.reduce(
-            (sum, s) => sum + (s.overallProgress || 0),
-            0
-          );
-          overallProgress = Math.round(totalProgress / submissions.length);
-        }
-
-        return {
-          id: student._id,
-          name: student.name,
-          courseName: student.courseName,
-          paidAmount: student.paidAmount,
-          remainingAmount: student.remainingAmount,
-          enrolledDate: student.enrolledDate,
-
-          assignedAssignmentsCount,
-          submittedCount,
-          notSubmittedCount,
-          submittedAssignments: submittedList,
-          notSubmittedAssignments: notSubmittedList,
-          profileImage: student.profileImage,
-
-          progress: {
-            totalCorrect,
-            totalWrong,
-            overallProgress, // percentage (0–100)
-          },
-        };
-      })
-    );
-
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-
 
 
 
@@ -542,96 +415,6 @@ exports.getStudentSummary = async (req, res) => {
 
 
 
-// ==================== Dashboard Summary ====================
-exports.getDashboardSummary = async (req, res) => {
-  try {
-    // 1. Total students (excluding admin & subadmin)
-    const totalStudents = await Student.countDocuments({ role: { $nin: EXCLUDED_ROLES } });
-
-    // 2. Total assignments (only parent level)
-    const totalAssignments = await Assignment.countDocuments();
-
-    // 3. Students who submitted at least one assignment (excluding admin & subadmin submissions)
-    const staffIds = await Student.find({ role: { $in: EXCLUDED_ROLES } }).distinct("_id");
-
-    const submittedStudentIds = await Submission.distinct("studentId", {
-      studentId: { $nin: staffIds },
-    });
-    const studentsSubmittedCount = submittedStudentIds.length;
-
-    // 4. Completion rate (averageProgress)
-    const averageProgress =
-      totalStudents > 0 ? (studentsSubmittedCount / totalStudents) * 100 : 0;
-
-    // 5. Average score (excluding admin & subadmin submissions)
-    const scoreData = await Submission.aggregate([
-      { $match: { studentId: { $nin: staffIds } } },
-      {
-        $group: {
-          _id: null,
-          avgScore: {
-            $avg: {
-              $cond: [
-                { $gt: ["$totalCorrect", 0] },
-                {
-                  $multiply: [
-                    {
-                      $divide: [
-                        "$totalCorrect",
-                        { $add: ["$totalCorrect", "$totalWrong"] },
-                      ],
-                    },
-                    100,
-                  ],
-                },
-                0,
-              ],
-            },
-          },
-        },
-      },
-    ]);
-
-    const averageScore = scoreData.length > 0 ? scoreData[0].avgScore || 0 : 0;
-
-    // 6. Total submissions (excluding admin & subadmin submissions)
-    const totalSubmissions = await Submission.countDocuments({
-      studentId: { $nin: staffIds },
-    });
-
-    res.json({
-      totalStudents,
-      totalAssignments,
-      studentsSubmittedCount,
-      totalSubmissions,
-      averageProgress: Number(averageProgress.toFixed(2)), // completion %
-      averageScore: Number(averageScore.toFixed(2)), // marks %
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-
-// recent students
-exports.getRecentStudents = async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 5;
-
-    // ✅ Exclude admins & subadmins
-    const students = await Student.find(
-      { role: { $nin: EXCLUDED_ROLES } },
-      { name: 1, courseName: 1, _id: 0 }
-    )
-      .sort({ enrolledDate: -1 })
-      .limit(limit);
-
-    res.json(students);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
 
 
 
@@ -765,3 +548,214 @@ exports.getAssignmentResult = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+
+// Get all students with summary info + progress
+exports.getStudentsWithSummary = async (req, res) => {
+try {
+// ✅ Fetch only users (exclude admins)
+const students = await Student.find({ role: { $ne: "admin" } });
+
+const result = await Promise.all(  
+  students.map(async (student) => {  
+    // Get all assignments assigned to this student  
+    const assignedAssignments = await Assignment.find({  
+      assignedStudents: student._id,  
+    }).lean();  
+
+    // Flatten subAssignments with assignment details  
+    const allAssignedSubAssignments = assignedAssignments.flatMap((a) =>  
+      Array.isArray(a.subAssignments)  
+        ? a.subAssignments.map((sa) => ({  
+            _id: sa._id.toString(),  
+            subModuleName: sa.subModuleName,  
+            assignmentId: a._id.toString(),  
+            moduleName: a.moduleName,  
+          }))  
+        : []  
+    );  
+
+    const assignedAssignmentsCount = allAssignedSubAssignments.length;  
+
+    // Get submissions for this student  
+    const submissions = await Submission.find({  
+      studentId: student._id,  
+    }).lean();  
+
+    // Extract submitted subAssignmentIds  
+    const submittedSubAssignmentIds = new Set(  
+      submissions.flatMap((s) =>  
+        Array.isArray(s.submittedAnswers)  
+          ? s.submittedAnswers.map((ans) => ans.subAssignmentId?.toString())  
+          : []  
+      )  
+    );  
+
+    // Build submitted & not submitted lists  
+    let submittedList = allAssignedSubAssignments.filter((sa) =>  
+      submittedSubAssignmentIds.has(sa._id)  
+    );  
+
+    const notSubmittedList = allAssignedSubAssignments.filter(  
+      (sa) => !submittedSubAssignmentIds.has(sa._id)  
+    );  
+
+    // Attach progressPercent per submitted sub-assignment  
+    submittedList = submittedList.map((sa) => {  
+      const submission = submissions.find((s) =>  
+        s.submittedAnswers?.some(  
+          (ans) => ans.subAssignmentId?.toString() === sa._id  
+        )  
+      );  
+
+      const subAnswer = submission?.submittedAnswers?.find(  
+        (ans) => ans.subAssignmentId?.toString() === sa._id  
+      );  
+
+      return {  
+        ...sa,  
+        progressPercent: subAnswer?.progressPercent || 0,  
+        correctCount: subAnswer?.correctCount || 0,  
+        wrongCount: subAnswer?.wrongCount || 0,  
+      };  
+    });  
+
+    const submittedCount = submittedList.length;  
+    const notSubmittedCount = notSubmittedList.length;  
+
+    // Overall progress calculation  
+    let totalCorrect = 0;  
+    let totalWrong = 0;  
+    let overallProgress = 0;  
+
+    if (submissions.length > 0) {  
+      totalCorrect = submissions.reduce(  
+        (sum, s) => sum + (s.totalCorrect || 0),  
+        0  
+      );  
+      totalWrong = submissions.reduce(  
+        (sum, s) => sum + (s.totalWrong || 0),  
+        0  
+      );  
+
+      const totalProgress = submissions.reduce(  
+        (sum, s) => sum + (s.overallProgress || 0),  
+        0  
+      );  
+      overallProgress = Math.round(totalProgress / submissions.length);  
+    }  
+
+    return {  
+      id: student._id,  
+      name: student.name,  
+      courseName: student.courseName,  
+      paidAmount: student.paidAmount,  
+      remainingAmount: student.remainingAmount,  
+      enrolledDate: student.enrolledDate,  
+
+      assignedAssignmentsCount,  
+      submittedCount,  
+      notSubmittedCount,  
+      submittedAssignments: submittedList,  
+      notSubmittedAssignments: notSubmittedList,  
+      profileImage: student.profileImage,  
+
+      progress: {  
+        totalCorrect,  
+        totalWrong,  
+        overallProgress, // percentage (0–100)  
+      },  
+    };  
+  })  
+);  
+
+res.json(result);
+
+} catch (err) {
+res.status(500).json({ error: err.message });
+}
+};
+
+exports.getDashboardSummary = async (req, res) => {
+try {
+// 1. Total students (excluding admin)
+const totalStudents = await Student.countDocuments({ role: { $ne: "admin" } });
+
+// 2. Total assignments (only parent level)  
+const totalAssignments = await Assignment.countDocuments();  
+
+// 3. Students who submitted at least one assignment (excluding admin submissions)  
+const adminIds = await Student.find({ role: "admin" }).distinct("_id");  
+const submittedStudentIds = await Submission.distinct("studentId", { studentId: { $nin: adminIds } });  
+const studentsSubmittedCount = submittedStudentIds.length;  
+
+// 4. Completion rate (averageProgress)  
+const averageProgress = totalStudents > 0  
+  ? (studentsSubmittedCount / totalStudents) * 100  
+  : 0;  
+
+// 5. Average score (excluding admin submissions)  
+const scoreData = await Submission.aggregate([  
+  { $match: { studentId: { $nin: adminIds } } },  
+  {  
+    $group: {  
+      _id: null,  
+      avgScore: {  
+        $avg: {  
+          $cond: [  
+            { $gt: ["$totalCorrect", 0] },  
+            {  
+              $multiply: [  
+                { $divide: ["$totalCorrect", { $add: ["$totalCorrect", "$totalWrong"] }] },  
+                100  
+              ]  
+            },  
+            0  
+          ]  
+        }  
+      }  
+    }  
+  }  
+]);  
+
+const averageScore = scoreData.length > 0 ? scoreData[0].avgScore || 0 : 0;  
+
+// 6. Total submissions (excluding admin submissions)  
+const totalSubmissions = await Submission.countDocuments({ studentId: { $nin: adminIds } });  
+
+res.json({  
+  totalStudents,  
+  totalAssignments,  
+  studentsSubmittedCount,  
+  totalSubmissions,  
+  averageProgress: Number(averageProgress.toFixed(2)), // completion %  
+  averageScore: Number(averageScore.toFixed(2)) // marks %  
+});
+
+} catch (err) {
+res.status(500).json({ error: err.message });
+}
+};
+
+//recent students
+exports.getRecentStudents = async (req, res) => {
+try {
+// Get latest students (limit can be passed as query ?limit=5)
+const limit = parseInt(req.query.limit) || 5;
+
+// ✅ Exclude admins  
+const students = await Student.find(  
+  { role: { $ne: "admin" } }, // filter condition  
+  { name: 1, courseName: 1, _id: 0 }  
+)  
+  .sort({ enrolledDate: -1 })  
+  .limit(limit);  
+
+res.json(students);
+
+} catch (err) {
+res.status(500).json({ error: err.message });
+}
+};
+
