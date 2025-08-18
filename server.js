@@ -146,7 +146,7 @@ app.post("/result", studentController.getAssignmentResult);
 
 
 // Admin routes
-app.post("/admin/add-subadmin" studentController.addSubadmin);
+app.post("/admin/add-subadmin", studentController.addSubadmin);
 
 app.put("/admin/subadmin/:id", studentController.updateSubadmin);
 
