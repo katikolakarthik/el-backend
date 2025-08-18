@@ -2,6 +2,59 @@ const Student = require("../models/Student");
 const Submission = require("../models/Submission");
 const Assignment = require("../models/Assignment");
 
+
+// Delete Admin
+exports.deleteAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const admin = await Student.findOneAndDelete({ _id: id, role: "admin" });
+
+    if (!admin) {
+      return res.status(404).json({ success: false, message: "Admin not found" });
+    }
+
+    res.json({ success: true, message: "Admin deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Update Admin (name/password)
+exports.updateAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, password } = req.body;
+
+    if (!name && !password) {
+      return res.status(400).json({ success: false, message: "Provide at least one field to update" });
+    }
+
+    const updateFields = {};
+    if (name) updateFields.name = name;
+    if (password) updateFields.password = password;
+
+    const admin = await Student.findOneAndUpdate(
+      { _id: id, role: "admin" },
+      { $set: updateFields },
+      { new: true }
+    );
+
+    if (!admin) {
+      return res.status(404).json({ success: false, message: "Admin not found" });
+    }
+
+    res.json({ success: true, message: "Admin updated successfully", admin });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+
+
+
+
+
 exports.addStudent = async (req, res) => {
   try {
     const { name, password, courseName, paidAmount, remainingAmount, enrolledDate } = req.body;
