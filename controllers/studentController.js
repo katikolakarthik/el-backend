@@ -2,58 +2,123 @@ const Student = require("../models/Student");
 const Submission = require("../models/Submission");
 const Assignment = require("../models/Assignment");
 
-
-
-// Delete Admin
-exports.deleteAdmin = async (req, res) => {
+// Add Subadmin (no auth required)
+exports.addSubadmin = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { name, password } = req.body;
 
-    const admin = await Student.findOneAndDelete({ _id: id, role: "admin" });
-
-    if (!admin) {
-      return res.status(404).json({ success: false, message: "Admin not found" });
+    if (!name || !password) {
+      return res.status(400).json({ success: false, message: "Name and password are required" });
     }
 
-    res.json({ success: true, message: "Admin deleted successfully" });
+    // Check if user exists already
+    const existingUser = await Student.findOne({ name, role: "subadmin" });
+    if (existingUser) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Subadmin with this name already exists" 
+      });
+    }
+
+    const subadmin = new Student({
+      name,
+      password,
+      role: "subadmin"
+    });
+
+    await subadmin.save();
+    res.json({ 
+      success: true, 
+      message: "Subadmin created successfully", 
+      subadmin: {
+        _id: subadmin._id,
+        name: subadmin.name,
+        role: subadmin.role
+      }
+    });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
-// Update Admin (name/password)
-exports.updateAdmin = async (req, res) => {
+// Update Subadmin (no auth required)
+exports.updateSubadmin = async (req, res) => {
   try {
     const { id } = req.params;
     const { name, password } = req.body;
 
-    if (!name && !password) {
-      return res.status(400).json({ success: false, message: "Provide at least one field to update" });
+    // Find the subadmin to update
+    const subadmin = await Student.findOne({ _id: id, role: "subadmin" });
+    if (!subadmin) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Subadmin not found" 
+      });
     }
 
-    const updateFields = {};
-    if (name) updateFields.name = name;
-    if (password) updateFields.password = password;
+    // Update fields
+    if (name) subadmin.name = name;
+    if (password) subadmin.password = password;
 
-    const admin = await Student.findOneAndUpdate(
-      { _id: id, role: "admin" },
-      { $set: updateFields },
-      { new: true }
-    );
+    await subadmin.save();
+    res.json({ 
+      success: true, 
+      message: "Subadmin updated successfully", 
+      subadmin: {
+        _id: subadmin._id,
+        name: subadmin.name,
+        role: subadmin.role
+      }
+    });
 
-    if (!admin) {
-      return res.status(404).json({ success: false, message: "Admin not found" });
-    }
-
-    res.json({ success: true, message: "Admin updated successfully", admin });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
+// Delete Subadmin (no auth required)
+exports.deleteSubadmin = async (req, res) => {
+  try {
+    const { id } = req.params;
 
+    const subadmin = await Student.findOneAndDelete({ 
+      _id: id, 
+      role: "subadmin"
+    });
 
+    if (!subadmin) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Subadmin not found" 
+      });
+    }
 
+    res.json({ 
+      success: true, 
+      message: "Subadmin deleted successfully" 
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Get all Subadmins (no auth required)
+exports.getAllSubadmins = async (req, res) => {
+  try {
+    const subadmins = await Student.find({ role: "subadmin" })
+      .select("-password -__v");
+
+    res.json({ 
+      success: true, 
+      subadmins 
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 
 
 exports.addStudent = async (req, res) => {
