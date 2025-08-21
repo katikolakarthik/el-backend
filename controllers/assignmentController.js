@@ -4,187 +4,165 @@ const mongoose = require("mongoose");
 
 
 
-
 exports.addAssignment = async (req, res) => {
-  try {
-    const { moduleName, subAssignments, category } = req.body;
-    const files = req.files?.assignmentPdf || [];
+try {
+const { moduleName, assignedStudents, subAssignments } = req.body;
+const files = req.files?.assignmentPdf || [];
 
-    if (!category || !category.trim()) {
-      return res.status(400).json({ success: false, message: "category is required" });
-    }
+let assignmentData = {          
+  moduleName,          
+  assignedStudents: assignedStudents ? assignedStudents.split(",") : []          
+};          
+      
+if (subAssignments) {          
+  const parsed = JSON.parse(subAssignments);          
+      
+  // Helper: Format dynamic questions (MCQ or text)          
+  const formatDynamic = (questions) => questions.map(q => ({          
+    questionText: q.questionText,          
+    options: q.options || [],          
+    answer: q.answer          
+  }));          
+      
+  // Helper: Format predefined answers          
+  const formatPredefined = (sub) => ({          
+    patientName: sub.answerPatientName || null,          
+    ageOrDob: sub.answerAgeOrDob || null,          
+    icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],          
+    cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],          
+    notes: sub.answerNotes || null          
+  });          
+      
+  // Single assignment → store at parent level          
+  if (parsed.length === 1) {          
+    const single = parsed[0];          
+    assignmentData.assignmentPdf = files[0]          
+      ? files[0].path || files[0].url || files[0].secure_url || null          
+      : null;          
+      
+    if (single.isDynamic) {          
+      assignmentData.dynamicQuestions = formatDynamic(single.questions);          
+    } else {          
+      assignmentData.answerKey = formatPredefined(single);          
+    }          
+  }          
+  // Multiple sub-assignments          
+  else {          
+    assignmentData.subAssignments = parsed.map((sub, index) => {          
+      const pdfPath = files[index]          
+        ? files[index].path || files[index].url || files[index].secure_url || null          
+        : null;          
+      
+      if (sub.isDynamic) {          
+        return {          
+          subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,          
+          dynamicQuestions: formatDynamic(sub.questions),          
+          assignmentPdf: pdfPath          
+        };          
+      } else {          
+        return {          
+          subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,          
+          assignmentPdf: pdfPath,          
+          answerKey: formatPredefined(sub)          
+        };          
+      }          
+    });          
+  }          
+}          
+      
+const assignment = new Assignment(assignmentData);          
+await assignment.save();          
+      
+res.json({          
+  success: true,          
+  message: "Assignment saved successfully (supports predefined, text, and MCQ dynamic questions)",          
+  assignment          
+});
 
-    let assignmentData = {
-      moduleName,
-      category: category.trim(),
-      // assignedStudents is deprecated; ignore any incoming values
-    };
-
-    if (subAssignments) {
-      const parsed = JSON.parse(subAssignments);
-
-      // Helper: Format dynamic questions (MCQ or text)
-      const formatDynamic = (questions) =>
-        (questions || []).map((q) => ({
-          questionText: q.questionText,
-          options: q.options || [],
-          answer: q.answer
-        }));
-
-      // Helper: Format predefined answers
-      const formatPredefined = (sub) => ({
-        patientName: sub.answerPatientName || null,
-        ageOrDob: sub.answerAgeOrDob || null,
-        icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
-        cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
-        notes: sub.answerNotes || null
-      });
-
-      // Single assignment → store at parent level
-      if (parsed.length === 1) {
-        const single = parsed[0];
-        assignmentData.assignmentPdf = files[0]
-          ? files[0].path || files[0].url || files[0].secure_url || null
-          : null;
-
-        if (single.isDynamic) {
-          assignmentData.dynamicQuestions = formatDynamic(single.questions);
-        } else {
-          assignmentData.answerKey = formatPredefined(single);
-        }
-      } else {
-        // Multiple sub-assignments
-        assignmentData.subAssignments = parsed.map((sub, index) => {
-          const pdfPath = files[index]
-            ? files[index].path || files[index].url || files[index].secure_url || null
-            : null;
-
-          if (sub.isDynamic) {
-            return {
-              subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
-              dynamicQuestions: formatDynamic(sub.questions),
-              assignmentPdf: pdfPath
-            };
-          } else {
-            return {
-              subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
-              assignmentPdf: pdfPath,
-              answerKey: formatPredefined(sub)
-            };
-          }
-        });
-      }
-    }
-
-    const assignment = new Assignment(assignmentData);
-    await assignment.save();
-
-    res.json({
-      success: true,
-      message:
-        "Assignment saved to category successfully (supports predefined, text, and MCQ dynamic questions)",
-      assignment
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+} catch (err) {
+res.status(500).json({ error: err.message });
+}
 };
-
-
-
-
 
 
 // Get all assignments with merged question format
 exports.getAssignments = async (req, res) => {
-  try {
-    const { category, categories } = req.query;
+try {
+const assignments = await Assignment.find().populate("assignedStudents");
 
-    const query = {};
-    if (category && category.trim()) {
-      query.category = category.trim();
-    } else if (categories && categories.trim()) {
-      const arr = categories.split(",").map((c) => c.trim()).filter(Boolean);
-      if (arr.length) query.category = { $in: arr };
-    }
+// Helper: format predefined questions          
+const formatPredefined = (answerKey) => {          
+  if (!answerKey) return [];          
+  const hasData =          
+    answerKey.patientName ||          
+    answerKey.ageOrDob ||          
+    (answerKey.icdCodes && answerKey.icdCodes.length) ||          
+    (answerKey.cptCodes && answerKey.cptCodes.length) ||          
+    answerKey.notes;          
+      
+  return hasData          
+    ? [{          
+        type: "predefined",          
+        answerKey          
+      }]          
+    : [];          
+};          
+      
+// Helper: format dynamic questions (with MCQ options + on-the-fly dynamicAnswerKey)          
+const formatDynamic = (dynamicQuestions) => {          
+  if (!dynamicQuestions || !dynamicQuestions.length) return [];          
+  return dynamicQuestions.map(q => ({          
+    type: "dynamic",          
+    questionText: q.questionText,          
+    options: q.options || [],          
+    answer: q.answer          
+  }));          
+};          
+      
+const formatted = assignments.map(a => ({          
+  _id: a._id,          
+  moduleName: a.moduleName,          
+  assignedStudents: a.assignedStudents,          
+  assignedDate: a.assignedDate,          
+  assignmentPdf: a.assignmentPdf || null,          
+      
+  // Merged questions (parent level)          
+  questions: [          
+    ...formatPredefined(a.answerKey),          
+    ...formatDynamic(a.dynamicQuestions)          
+  ],          
+      
+  // On-the-fly dynamicAnswerKey (parent level)          
+  dynamicAnswerKey: a.dynamicQuestions?.map(q => ({          
+    questionText: q.questionText,          
+    answer: q.answer          
+  })) || [],          
+      
+  // Sub-assignments          
+  subAssignments: a.subAssignments.map(sa => ({          
+    _id: sa._id,          
+    subModuleName: sa.subModuleName,          
+    assignmentPdf: sa.assignmentPdf || null,          
+      
+    questions: [          
+      ...formatPredefined(sa.answerKey),          
+      ...formatDynamic(sa.dynamicQuestions)          
+    ],          
+      
+    // On-the-fly dynamicAnswerKey (sub-assignment level)          
+    dynamicAnswerKey: sa.dynamicQuestions?.map(q => ({          
+      questionText: q.questionText,          
+      answer: q.answer          
+    })) || []          
+  }))          
+}));          
+      
+res.json(formatted);
 
-    const assignments = await Assignment.find(query)
-      // .populate("assignedStudents") // deprecated; comment out if no longer needed anywhere
-      .sort({ assignedDate: -1 });
-
-    // Helper: format predefined questions
-    const formatPredefined = (answerKey) => {
-      if (!answerKey) return [];
-      const hasData =
-        answerKey.patientName ||
-        answerKey.ageOrDob ||
-        (answerKey.icdCodes && answerKey.icdCodes.length) ||
-        (answerKey.cptCodes && answerKey.cptCodes.length) ||
-        answerKey.notes;
-
-      return hasData
-        ? [
-            {
-              type: "predefined",
-              answerKey
-            }
-          ]
-        : [];
-    };
-
-    // Helper: format dynamic questions (with MCQ options + on-the-fly dynamicAnswerKey)
-    const formatDynamic = (dynamicQuestions) => {
-      if (!dynamicQuestions || !dynamicQuestions.length) return [];
-      return dynamicQuestions.map((q) => ({
-        type: "dynamic",
-        questionText: q.questionText,
-        options: q.options || [],
-        answer: q.answer
-      }));
-    };
-
-    const formatted = assignments.map((a) => ({
-      _id: a._id,
-      moduleName: a.moduleName,
-      category: a.category,
-      // assignedStudents: a.assignedStudents, // deprecated
-      assignedDate: a.assignedDate,
-      assignmentPdf: a.assignmentPdf || null,
-
-      // Merged questions (parent level)
-      questions: [...formatPredefined(a.answerKey), ...formatDynamic(a.dynamicQuestions)],
-
-      // On-the-fly dynamicAnswerKey (parent level)
-      dynamicAnswerKey:
-        a.dynamicQuestions?.map((q) => ({
-          questionText: q.questionText,
-          answer: q.answer
-        })) || [],
-
-      // Sub-assignments
-      subAssignments:
-        (a.subAssignments || []).map((sa) => ({
-          _id: sa._id,
-          subModuleName: sa.subModuleName,
-          assignmentPdf: sa.assignmentPdf || null,
-
-          questions: [...formatPredefined(sa.answerKey), ...formatDynamic(sa.dynamicQuestions)],
-
-          // On-the-fly dynamicAnswerKey (sub-assignment level)
-          dynamicAnswerKey:
-            sa.dynamicQuestions?.map((q) => ({
-              questionText: q.questionText,
-              answer: q.answer
-            })) || []
-        })) || []
-    }));
-
-    res.json(formatted);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+} catch (err) {
+res.status(500).json({ error: err.message });
+}
 };
-
 
 
 
