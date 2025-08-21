@@ -5,29 +5,31 @@ const mongoose = require("mongoose");
 
 
 
-
-
-
-
 exports.addAssignment = async (req, res) => {
   try {
-    const { moduleName, assignedStudents, subAssignments } = req.body;
+    const { moduleName, subAssignments, category } = req.body;
     const files = req.files?.assignmentPdf || [];
+
+    if (!category || !category.trim()) {
+      return res.status(400).json({ success: false, message: "category is required" });
+    }
 
     let assignmentData = {
       moduleName,
-      assignedStudents: assignedStudents ? assignedStudents.split(",") : []
+      category: category.trim(),
+      // assignedStudents is deprecated; ignore any incoming values
     };
 
     if (subAssignments) {
       const parsed = JSON.parse(subAssignments);
 
       // Helper: Format dynamic questions (MCQ or text)
-      const formatDynamic = (questions) => questions.map(q => ({
-        questionText: q.questionText,
-        options: q.options || [],
-        answer: q.answer
-      }));
+      const formatDynamic = (questions) =>
+        (questions || []).map((q) => ({
+          questionText: q.questionText,
+          options: q.options || [],
+          answer: q.answer
+        }));
 
       // Helper: Format predefined answers
       const formatPredefined = (sub) => ({
@@ -50,9 +52,8 @@ exports.addAssignment = async (req, res) => {
         } else {
           assignmentData.answerKey = formatPredefined(single);
         }
-      }
-      // Multiple sub-assignments
-      else {
+      } else {
+        // Multiple sub-assignments
         assignmentData.subAssignments = parsed.map((sub, index) => {
           const pdfPath = files[index]
             ? files[index].path || files[index].url || files[index].secure_url || null
@@ -80,7 +81,8 @@ exports.addAssignment = async (req, res) => {
 
     res.json({
       success: true,
-      message: "Assignment saved successfully (supports predefined, text, and MCQ dynamic questions)",
+      message:
+        "Assignment saved to category successfully (supports predefined, text, and MCQ dynamic questions)",
       assignment
     });
   } catch (err) {
@@ -90,13 +92,25 @@ exports.addAssignment = async (req, res) => {
 
 
 
-// Get all assignments
 
-// Get all assignments with merged question format
+
+
 // Get all assignments with merged question format
 exports.getAssignments = async (req, res) => {
   try {
-    const assignments = await Assignment.find().populate("assignedStudents");
+    const { category, categories } = req.query;
+
+    const query = {};
+    if (category && category.trim()) {
+      query.category = category.trim();
+    } else if (categories && categories.trim()) {
+      const arr = categories.split(",").map((c) => c.trim()).filter(Boolean);
+      if (arr.length) query.category = { $in: arr };
+    }
+
+    const assignments = await Assignment.find(query)
+      // .populate("assignedStudents") // deprecated; comment out if no longer needed anywhere
+      .sort({ assignedDate: -1 });
 
     // Helper: format predefined questions
     const formatPredefined = (answerKey) => {
@@ -109,17 +123,19 @@ exports.getAssignments = async (req, res) => {
         answerKey.notes;
 
       return hasData
-        ? [{
-            type: "predefined",
-            answerKey
-          }]
+        ? [
+            {
+              type: "predefined",
+              answerKey
+            }
+          ]
         : [];
     };
 
     // Helper: format dynamic questions (with MCQ options + on-the-fly dynamicAnswerKey)
     const formatDynamic = (dynamicQuestions) => {
       if (!dynamicQuestions || !dynamicQuestions.length) return [];
-      return dynamicQuestions.map(q => ({
+      return dynamicQuestions.map((q) => ({
         type: "dynamic",
         questionText: q.questionText,
         options: q.options || [],
@@ -127,42 +143,40 @@ exports.getAssignments = async (req, res) => {
       }));
     };
 
-    const formatted = assignments.map(a => ({
+    const formatted = assignments.map((a) => ({
       _id: a._id,
       moduleName: a.moduleName,
-      assignedStudents: a.assignedStudents,
+      category: a.category,
+      // assignedStudents: a.assignedStudents, // deprecated
       assignedDate: a.assignedDate,
       assignmentPdf: a.assignmentPdf || null,
 
       // Merged questions (parent level)
-      questions: [
-        ...formatPredefined(a.answerKey),
-        ...formatDynamic(a.dynamicQuestions)
-      ],
+      questions: [...formatPredefined(a.answerKey), ...formatDynamic(a.dynamicQuestions)],
 
       // On-the-fly dynamicAnswerKey (parent level)
-      dynamicAnswerKey: a.dynamicQuestions?.map(q => ({
-        questionText: q.questionText,
-        answer: q.answer
-      })) || [],
-
-      // Sub-assignments
-      subAssignments: a.subAssignments.map(sa => ({
-        _id: sa._id,
-        subModuleName: sa.subModuleName,
-        assignmentPdf: sa.assignmentPdf || null,
-
-        questions: [
-          ...formatPredefined(sa.answerKey),
-          ...formatDynamic(sa.dynamicQuestions)
-        ],
-
-        // On-the-fly dynamicAnswerKey (sub-assignment level)
-        dynamicAnswerKey: sa.dynamicQuestions?.map(q => ({
+      dynamicAnswerKey:
+        a.dynamicQuestions?.map((q) => ({
           questionText: q.questionText,
           answer: q.answer
+        })) || [],
+
+      // Sub-assignments
+      subAssignments:
+        (a.subAssignments || []).map((sa) => ({
+          _id: sa._id,
+          subModuleName: sa.subModuleName,
+          assignmentPdf: sa.assignmentPdf || null,
+
+          questions: [...formatPredefined(sa.answerKey), ...formatDynamic(sa.dynamicQuestions)],
+
+          // On-the-fly dynamicAnswerKey (sub-assignment level)
+          dynamicAnswerKey:
+            sa.dynamicQuestions?.map((q) => ({
+              questionText: q.questionText,
+              answer: q.answer
+            })) || []
         })) || []
-      }))
     }));
 
     res.json(formatted);
@@ -170,6 +184,9 @@ exports.getAssignments = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+
 
 
 
