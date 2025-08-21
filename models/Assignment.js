@@ -30,8 +30,15 @@ const subAssignmentSchema = new mongoose.Schema({
 
 const assignmentSchema = new mongoose.Schema({
   moduleName: { type: String, required: true },
+
+  // NEW: category container, e.g., "ICD", "CPT", "Coding Basics", etc.
+  // If you want to restrict values, uncomment "enum" and list allowed values.
+  category: { type: String, required: true, trim: true /*, enum: ["ICD", "CPT", "…"]*/ },
+
   subAssignments: [subAssignmentSchema],
   assignmentPdf: String,
+
+  // parent-level predefined answerKey
   answerKey: {
     patientName: String,
     ageOrDob: String,
@@ -39,9 +46,17 @@ const assignmentSchema = new mongoose.Schema({
     cptCodes: [String],
     notes: String
   },
-  dynamicQuestions: [questionSchema], // No separate answerKey needed
+
+  // parent-level dynamic Qs
+  dynamicQuestions: [questionSchema],
+
+  // DEPRECATED: we will no longer assign to students directly
   assignedStudents: [{ type: mongoose.Schema.Types.ObjectId, ref: "Student" }],
+
   assignedDate: { type: Date, default: Date.now }
 });
+
+// Fast lookups by category
+assignmentSchema.index({ category: 1, assignedDate: -1 });
 
 module.exports = mongoose.model("Assignment", assignmentSchema);
