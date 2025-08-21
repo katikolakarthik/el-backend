@@ -34,11 +34,11 @@ app.use(
 app.use(express.json());
 
 // MongoDB Connection
-mongoose.connect(
-  "mongodb+srv://adepusanjay444:12345@cluster0.nbd7uta.mongodb.net/Wellmed",
-  { useNewUrlParser: true, useUnifiedTopology: true }
-).then(() => console.log("✅ MongoDB Connected"))
- .catch(err => console.error("❌ MongoDB Error:", err));
+mongoose.connect(process.env.MONGO_URI || "mongodb+srv://adepusanjay444:12345@cluster0.nbd7uta.mongodb.net/Wellmed")
+  .then(() => console.log("✅ MongoDB Connected"))
+  .catch(err => console.error("❌ MongoDB Error:", err));
+
+
 
 // Test Route
 app.get("/", (req, res) => res.send("Server is running 🚀"));
