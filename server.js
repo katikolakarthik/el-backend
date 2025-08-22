@@ -166,6 +166,16 @@ app.get('/student/:studentId/course', studentController.getStudentCourse);
 app.get('/count/:category', assignmentController.getAssignmentsCountByCategory);
 
 
+
+// Get assignment statistics
+app.get('/stats/:category/:studentId', assignmentController.getAssignmentStatsByCategory);
+
+// Get detailed assignment statistics with lists
+app.get('/stats-detailed/:category/:studentId', assignmentController.getDetailedAssignmentStats);
+
+
+
+
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
 module.exports = app;
