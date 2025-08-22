@@ -31,9 +31,11 @@ const subAssignmentSchema = new mongoose.Schema({
 const assignmentSchema = new mongoose.Schema({
   moduleName: { type: String, required: true },
 
-  // NEW: category container, e.g., "ICD", "CPT", "Coding Basics", etc.
-  // If you want to restrict values, uncomment "enum" and list allowed values.
-  category: { type: String, required: true, trim: true /*, enum: ["ICD", "CPT", "…"]*/ },
+  
+category: { type: String, required: true, trim: true }
+
+
+
 
   subAssignments: [subAssignmentSchema],
   assignmentPdf: String,
