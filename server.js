@@ -158,6 +158,10 @@ app.get("/admin/subadmins", studentController.getAllSubadmins);
 // Get assignments by category
 app.get("/category/:category", assignmentController.getAssignmentsByCategory);
 
+
+app.get('/student/:studentId/course', studentController.getStudentCourse);
+
+
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
 module.exports = app;
