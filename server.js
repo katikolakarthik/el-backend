@@ -162,6 +162,13 @@ app.get("/category/:category", assignmentController.getAssignmentsByCategory);
 app.get('/student/:studentId/course', studentController.getStudentCourse);
 
 
+// Get assignments count by category
+app.get('/count/:category', assignmentController.getAssignmentsCountByCategory);
+
+
+
+
+
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
 module.exports = app;
