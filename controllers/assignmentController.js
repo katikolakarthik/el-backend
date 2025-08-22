@@ -473,3 +473,107 @@ exports.getAssignmentDetailsForStudent = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+// Get all assignments by category
+exports.getAssignmentsByCategory = async (req, res) => {
+  try {
+    const { category } = req.params;
+    
+    if (!category) {
+      return res.status(400).json({
+        success: false,
+        message: "Category parameter is required"
+      });
+    }
+
+    // Find all assignments for the given category
+    const assignments = await Assignment.find({ 
+      category: category.trim().toUpperCase() 
+    }).populate("assignedStudents");
+
+    if (!assignments || assignments.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `No assignments found for category: ${category}`
+      });
+    }
+
+    // Helper: format predefined answers
+    const formatPredefined = (answerKey) => {
+      if (!answerKey) return [];
+      const hasData =
+        answerKey.patientName ||
+        answerKey.ageOrDob ||
+        (answerKey.icdCodes && answerKey.icdCodes.length) ||
+        (answerKey.cptCodes && answerKey.cptCodes.length) ||
+        answerKey.notes;
+
+      return hasData
+        ? [{
+            type: "predefined",
+            answerKey
+          }]
+        : [];
+    };
+
+    // Helper: format dynamic questions
+    const formatDynamic = (dynamicQuestions) => {
+      if (!dynamicQuestions || !dynamicQuestions.length) return [];
+      return dynamicQuestions.map(q => ({
+        type: "dynamic",
+        questionText: q.questionText,
+        options: q.options || [],
+        answer: q.answer
+      }));
+    };
+
+    // Format all assignments for response
+    const formattedAssignments = assignments.map(assignment => ({
+      _id: assignment._id,
+      moduleName: assignment.moduleName,
+      category: assignment.category,
+      assignedStudents: assignment.assignedStudents,
+      assignedDate: assignment.assignedDate,
+      assignmentPdf: assignment.assignmentPdf || null,
+
+      // Parent-level questions
+      questions: [
+        ...formatPredefined(assignment.answerKey),
+        ...formatDynamic(assignment.dynamicQuestions)
+      ],
+      dynamicAnswerKey: assignment.dynamicQuestions?.map(q => ({
+        questionText: q.questionText,
+        answer: q.answer
+      })) || [],
+
+      // Sub-assignments
+      subAssignments: assignment.subAssignments.map(sa => ({
+        _id: sa._id,
+        subModuleName: sa.subModuleName,
+        assignmentPdf: sa.assignmentPdf || null,
+        questions: [
+          ...formatPredefined(sa.answerKey),
+          ...formatDynamic(sa.dynamicQuestions)
+        ],
+        dynamicAnswerKey: sa.dynamicQuestions?.map(q => ({
+          questionText: q.questionText,
+          answer: q.answer
+        })) || []
+      }))
+    }));
+
+    res.json({
+      success: true,
+      count: formattedAssignments.length,
+      category: category.toUpperCase(),
+      assignments: formattedAssignments
+    });
+
+  } catch (err) {
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
+  }
+};
