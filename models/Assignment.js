@@ -2,8 +2,8 @@ const mongoose = require("mongoose");
 
 const questionSchema = new mongoose.Schema({
   questionText: { type: String, required: true },
-  options: [String], // Optional - for MCQs
-  answer: { type: String } // Text or correct option
+  options: [String],             // optional for MCQs
+  answer: { type: String }       // text or correct option
 });
 
 const subAssignmentSchema = new mongoose.Schema({
@@ -15,7 +15,7 @@ const subAssignmentSchema = new mongoose.Schema({
   notes: String,
   assignmentPdf: String,
 
-  // Predefined answers
+  // Predefined answers (per sub)
   answerKey: {
     patientName: String,
     ageOrDob: String,
@@ -24,23 +24,20 @@ const subAssignmentSchema = new mongoose.Schema({
     notes: String
   },
 
-  // Dynamic questions (MCQ or text)
+  // Dynamic questions (per sub)
   dynamicQuestions: [questionSchema]
 });
 
 const assignmentSchema = new mongoose.Schema({
   moduleName: { type: String, required: true },
 
-  
-category: { type: String, required: true, trim: true }
-
-
-
+  // Category container, e.g. "ICD", "CPT"
+  category: { type: String, required: true, trim: true },   // <-- add comma here
 
   subAssignments: [subAssignmentSchema],
   assignmentPdf: String,
 
-  // parent-level predefined answerKey
+  // Parent-level predefined answerKey (when there is only one sub-assignment)
   answerKey: {
     patientName: String,
     ageOrDob: String,
@@ -49,10 +46,10 @@ category: { type: String, required: true, trim: true }
     notes: String
   },
 
-  // parent-level dynamic Qs
+  // Parent-level dynamic Qs (when there is only one sub-assignment)
   dynamicQuestions: [questionSchema],
 
-  // DEPRECATED: we will no longer assign to students directly
+  // Deprecated
   assignedStudents: [{ type: mongoose.Schema.Types.ObjectId, ref: "Student" }],
 
   assignedDate: { type: Date, default: Date.now }
