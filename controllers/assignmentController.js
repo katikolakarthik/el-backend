@@ -612,3 +612,171 @@ exports.getAssignmentsCountByCategory = async (req, res) => {
 };
 
 
+// Get assignment statistics for a student by category
+exports.getAssignmentStatsByCategory = async (req, res) => {
+  try {
+    const { category, studentId } = req.params;
+
+    if (!category || !studentId) {
+      return res.status(400).json({
+        success: false,
+        message: "Category and studentId parameters are required"
+      });
+    }
+
+    // Validate studentId
+    if (!mongoose.Types.ObjectId.isValid(studentId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid studentId format"
+      });
+    }
+
+    const formattedCategory = category.trim().toUpperCase();
+
+    // Get all assignments for the category
+    const assignments = await Assignment.find({ 
+      category: formattedCategory 
+    });
+
+    if (!assignments || assignments.length === 0) {
+      return res.json({
+        success: true,
+        category: formattedCategory,
+        totalAssigned: 0,
+        completed: 0,
+        averageScore: 0,
+        pending: 0,
+        message: "No assignments found for this category"
+      });
+    }
+
+    // Get all submissions for this student and category
+    const submissions = await Submission.find({
+      studentId: new mongoose.Types.ObjectId(studentId),
+      assignmentId: { $in: assignments.map(a => a._id) }
+    });
+
+    // Calculate statistics
+    const totalAssigned = assignments.length;
+    const completed = submissions.length;
+    const pending = totalAssigned - completed;
+
+    // Calculate average score
+    let totalScore = 0;
+    let totalSubmissionsWithScore = 0;
+
+    submissions.forEach(submission => {
+      if (submission.overallProgress !== undefined && submission.overallProgress !== null) {
+        totalScore += submission.overallProgress;
+        totalSubmissionsWithScore++;
+      }
+    });
+
+    const averageScore = totalSubmissionsWithScore > 0 
+      ? Math.round((totalScore / totalSubmissionsWithScore) * 100) / 100 
+      : 0;
+
+    res.json({
+      success: true,
+      category: formattedCategory,
+      totalAssigned,
+      completed,
+      averageScore: `${averageScore}%`,
+      pending,
+      stats: {
+        assigned: totalAssigned,
+        completed: completed,
+        averageScore: averageScore,
+        pending: pending
+      }
+    });
+
+  } catch (err) {
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
+  }
+};
+
+// Alternative: Get detailed statistics including assignment lists
+exports.getDetailedAssignmentStats = async (req, res) => {
+  try {
+    const { category, studentId } = req.params;
+
+    if (!category || !studentId) {
+      return res.status(400).json({
+        success: false,
+        message: "Category and studentId parameters are required"
+      });
+    }
+
+    const formattedCategory = category.trim().toUpperCase();
+
+    // Get all assignments for the category
+    const assignments = await Assignment.find({ 
+      category: formattedCategory 
+    });
+
+    // Get all submissions for this student and category
+    const submissions = await Submission.find({
+      studentId: new mongoose.Types.ObjectId(studentId),
+      assignmentId: { $in: assignments.map(a => a._id) }
+    }).populate('assignmentId');
+
+    // Create a map of assignmentId to submission for quick lookup
+    const submissionMap = {};
+    submissions.forEach(sub => {
+      submissionMap[sub.assignmentId._id.toString()] = sub;
+    });
+
+    // Categorize assignments
+    const completedAssignments = [];
+    const pendingAssignments = [];
+
+    assignments.forEach(assignment => {
+      const submission = submissionMap[assignment._id.toString()];
+      if (submission) {
+        completedAssignments.push({
+          assignment: assignment.moduleName,
+          score: submission.overallProgress || 0,
+          submissionDate: submission.submissionDate
+        });
+      } else {
+        pendingAssignments.push({
+          assignment: assignment.moduleName,
+          assignedDate: assignment.assignedDate
+        });
+      }
+    });
+
+    // Calculate statistics
+    const totalAssigned = assignments.length;
+    const completed = completedAssignments.length;
+    const pending = pendingAssignments.length;
+
+    // Calculate average score
+    const totalScore = completedAssignments.reduce((sum, assignment) => sum + assignment.score, 0);
+    const averageScore = completed > 0 ? Math.round((totalScore / completed) * 100) / 100 : 0;
+
+    res.json({
+      success: true,
+      category: formattedCategory,
+      summary: {
+        totalAssigned,
+        completed,
+        averageScore: `${averageScore}%`,
+        pending
+      },
+      completedAssignments,
+      pendingAssignments
+    });
+
+  } catch (err) {
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
+  }
+};
