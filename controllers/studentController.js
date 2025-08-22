@@ -884,3 +884,34 @@ exports.getStudentCourse = async (req, res) => {
     });
   }
 };
+
+
+
+
+exports.getStudentPaymentDetails = async (req, res) => {
+  try {
+    const { studentId } = req.query;
+    if (!studentId) {
+      return res.status(400).json({ error: "Missing studentId" });
+    }
+
+    const student = await Student.findById(studentId)
+      .select("name courseName enrolledDate paidAmount remainingAmount")
+      .lean();
+
+    if (!student) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    res.json({
+      studentId: student._id,
+      name: student.name,
+      courseName: student.courseName,
+      enrolledDate: student.enrolledDate,
+      paidAmount: student.paidAmount,
+      remainingAmount: student.remainingAmount,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
