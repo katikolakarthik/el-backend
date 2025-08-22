@@ -155,7 +155,8 @@ app.delete("/admin/subadmin/:id",  studentController.deleteSubadmin);
 app.get("/admin/subadmins", studentController.getAllSubadmins);
 
 
-
+// Get assignments by category
+app.get("/category/:category", assignmentController.getAssignmentsByCategory);
 
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
