@@ -270,3 +270,33 @@ res.json({ submission });
 res.status(500).json({ error: err.message });
 }
 };
+
+
+
+// GET /api/submissions/submitted-assignments?studentId=...
+exports.getSubmittedParentAssignments = async (req, res) => {
+  try {
+    const { studentId } = req.query; // or req.params / req.body as you prefer
+    if (!studentId) {
+      return res.status(400).json({ error: "studentId is required" });
+    }
+
+    // 1) Find all distinct parent assignment IDs with a submission by this student
+    const assignmentIds = await Submission.distinct("assignmentId", {
+      studentId,
+    });
+
+    if (!assignmentIds.length) {
+      return res.json({ count: 0, assignments: [] });
+    }
+
+    // 2) Fetch the full parent Assignment docs
+    const assignments = await Assignment.find({
+      _id: { $in: assignmentIds },
+    }).lean();
+
+    return res.json({ count: assignments.length, assignments });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
