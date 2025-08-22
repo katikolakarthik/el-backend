@@ -281,11 +281,11 @@ exports.getSubmittedParentAssignments = async (req, res) => {
       return res.status(400).json({ error: "Missing studentId" });
     }
 
-    // Fetch all submissions for the student, and populate assignment & sub-assignments
+    // Fetch submissions and populate parent assignment (moduleName + subAssignments)
     const submissions = await Submission.find({ studentId })
       .populate({
         path: "assignmentId",
-        select: "title subAssignments", // only bring assignment name & subs
+        select: "moduleName subAssignments", 
       })
       .lean();
 
@@ -293,22 +293,26 @@ exports.getSubmittedParentAssignments = async (req, res) => {
       return res.json({ assignments: [] });
     }
 
-    // Map over submissions and check completion
+    // Build response
     const result = submissions.map(sub => {
+      // Parent completed if there are any submitted answers at parent level
       const parentCompleted = Array.isArray(sub.submittedAnswers) && sub.submittedAnswers.length > 0;
 
+      // Check each sub-assignment completion
       const subAssignments = (sub.assignmentId?.subAssignments || []).map(sa => {
         const submitted = sub.submittedAnswers?.some(ans =>
           ans.subAssignmentId?.toString() === sa._id.toString()
         );
         return {
           subAssignmentId: sa._id,
-          name: sa.name,
+          subAssignmentName: sa.subModuleName, // from schema
           isCompleted: submitted,
         };
       });
 
-      // parent completed if all sub-assignments completed (or single one submitted)
+      // Parent assignment is complete if:
+      // - All sub-assignments are completed (when there are sub-assignments), OR
+      // - The parent itself has been submitted (when there are no sub-assignments)
       const isParentCompleted =
         subAssignments.length > 0
           ? subAssignments.every(sa => sa.isCompleted)
@@ -316,7 +320,7 @@ exports.getSubmittedParentAssignments = async (req, res) => {
 
       return {
         assignmentId: sub.assignmentId?._id,
-        assignmentName: sub.assignmentId?.title,
+        assignmentName: sub.assignmentId?.moduleName, // parent name from schema
         isCompleted: isParentCompleted,
         subAssignments,
       };
