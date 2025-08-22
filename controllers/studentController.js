@@ -833,3 +833,52 @@ exports.getRecentStudents = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+// Get student course name by studentId
+exports.getStudentCourse = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+
+    // Validate if studentId is provided
+    if (!studentId) {
+      return res.status(400).json({
+        success: false,
+        message: "Student ID is required"
+      });
+    }
+
+    // Validate if studentId is a valid MongoDB ObjectId
+    if (!mongoose.Types.ObjectId.isValid(studentId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Student ID format"
+      });
+    }
+
+    // Find the student by ID
+    const student = await Student.findById(studentId);
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found"
+      });
+    }
+
+    // Return the course name
+    res.json({
+      success: true,
+      studentId: student._id,
+      studentName: student.name,
+      courseName: student.courseName || "No course enrolled",
+      enrolledDate: student.enrolledDate
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+};
