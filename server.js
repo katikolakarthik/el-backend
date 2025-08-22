@@ -174,7 +174,7 @@ app.get('/stats/:category/:studentId', assignmentController.getAssignmentStatsBy
 app.get('/stats-detailed/:category/:studentId', assignmentController.getDetailedAssignmentStats);
 
 
-
+app.get("/payment-details", studentController.getStudentPaymentDetails);
 
 
 
