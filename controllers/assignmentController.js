@@ -577,3 +577,37 @@ exports.getAssignmentsByCategory = async (req, res) => {
     });
   }
 };
+
+
+
+// Get total assignments count by category
+exports.getAssignmentsCountByCategory = async (req, res) => {
+  try {
+    const { category } = req.params;
+
+    if (!category) {
+      return res.status(400).json({
+        success: false,
+        message: "Category parameter is required"
+      });
+    }
+
+    // Count assignments for the given category
+    const count = await Assignment.countDocuments({ 
+      category: category.trim().toUpperCase() 
+    });
+
+    res.json({
+      success: true,
+      category: category.toUpperCase(),
+      totalAssignments: count
+    });
+
+  } catch (err) {
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
+  }
+};
+
