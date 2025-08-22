@@ -273,30 +273,57 @@ res.status(500).json({ error: err.message });
 
 
 
-// GET /api/submissions/submitted-assignments?studentId=...
+
 exports.getSubmittedParentAssignments = async (req, res) => {
   try {
-    const { studentId } = req.query; // or req.params / req.body as you prefer
+    const { studentId } = req.query;
     if (!studentId) {
-      return res.status(400).json({ error: "studentId is required" });
+      return res.status(400).json({ error: "Missing studentId" });
     }
 
-    // 1) Find all distinct parent assignment IDs with a submission by this student
-    const assignmentIds = await Submission.distinct("assignmentId", {
-      studentId,
+    // Fetch all submissions for the student, and populate assignment & sub-assignments
+    const submissions = await Submission.find({ studentId })
+      .populate({
+        path: "assignmentId",
+        select: "title subAssignments", // only bring assignment name & subs
+      })
+      .lean();
+
+    if (!submissions || submissions.length === 0) {
+      return res.json({ assignments: [] });
+    }
+
+    // Map over submissions and check completion
+    const result = submissions.map(sub => {
+      const parentCompleted = Array.isArray(sub.submittedAnswers) && sub.submittedAnswers.length > 0;
+
+      const subAssignments = (sub.assignmentId?.subAssignments || []).map(sa => {
+        const submitted = sub.submittedAnswers?.some(ans =>
+          ans.subAssignmentId?.toString() === sa._id.toString()
+        );
+        return {
+          subAssignmentId: sa._id,
+          name: sa.name,
+          isCompleted: submitted,
+        };
+      });
+
+      // parent completed if all sub-assignments completed (or single one submitted)
+      const isParentCompleted =
+        subAssignments.length > 0
+          ? subAssignments.every(sa => sa.isCompleted)
+          : parentCompleted;
+
+      return {
+        assignmentId: sub.assignmentId?._id,
+        assignmentName: sub.assignmentId?.title,
+        isCompleted: isParentCompleted,
+        subAssignments,
+      };
     });
 
-    if (!assignmentIds.length) {
-      return res.json({ count: 0, assignments: [] });
-    }
-
-    // 2) Fetch the full parent Assignment docs
-    const assignments = await Assignment.find({
-      _id: { $in: assignmentIds },
-    }).lean();
-
-    return res.json({ count: assignments.length, assignments });
+    res.json({ assignments: result });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 };
