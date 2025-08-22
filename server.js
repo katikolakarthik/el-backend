@@ -176,6 +176,11 @@ app.get('/stats-detailed/:category/:studentId', assignmentController.getDetailed
 
 
 
+
+
+app.get("/submitted-assignments", submissionController.getSubmittedParentAssignments);
+
+
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
 module.exports = app;
