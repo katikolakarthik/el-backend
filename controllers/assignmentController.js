@@ -824,6 +824,26 @@ exports.getDetailedAssignmentStats = async (req, res) => {
 };
 
 
+// Helpers
+function textMatchIgnoreCase(a, b) {
+  const strA = (a ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+  const strB = (b ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+  return strA === strB;
+}
+
+function arraysMatchIgnoreOrder(a = [], b = []) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  const sortedA = a.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
+  const sortedB = b.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
+  return sortedA.every((val, idx) => val === sortedB[idx]);
+}
+
+
+
+
+
+
 
 
 // Main: Get submissions for assignmentId
