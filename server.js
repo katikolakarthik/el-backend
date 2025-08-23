@@ -181,6 +181,14 @@ app.get("/payment-details", studentController.getStudentPaymentDetails);
 app.get("/submitted-assignments", submissionController.getSubmittedParentAssignments);
 
 
+
+app.get(
+  "/assignments/:assignmentId/submissions",
+  assignmentController.getAssignmentSubmissions
+);
+
+
+
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
 module.exports = app;
