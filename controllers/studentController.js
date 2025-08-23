@@ -125,25 +125,30 @@ exports.getAllSubadmins = async (req, res) => {
 
 exports.addStudent = async (req, res) => {
   try {
-    const { name, password, courseName, paidAmount, remainingAmount, enrolledDate } = req.body;
+    const { name, password, courseName, paidAmount, remainingAmount, enrolledDate, expiryDate } = req.body;
     const profileImage = req.file ? req.file.path : null;
 
-    const student = new Student({
-      name,
-      password, // Plain text for now (can be hashed later)
-      courseName,
-      paidAmount,
-      remainingAmount,
+    const student = new Student({      
+      name,      
+      password,
+      courseName,      
+      paidAmount,      
+      remainingAmount,      
       enrolledDate,
-      profileImage
-    });
-
-    await student.save();
+      expiryDate, // Admin provides expiry date
+      expiresAt: expiryDate, // Set TTL field to same as expiry date
+      profileImage      
+    });      
+    
+    await student.save();      
     res.json({ success: true, message: "Student added successfully", student });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
+
 
 // Get Students (excluding admins)
 exports.getStudents = async (req, res) => {
