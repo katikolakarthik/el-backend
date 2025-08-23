@@ -331,3 +331,107 @@ exports.getSubmittedParentAssignments = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+exports.getSubmissionDetails = async (req, res) => {
+  try {
+    const { submissionId } = req.params;
+
+    // Find the submission with populated assignment data
+    const submission = await Submission.findById(submissionId)
+      .populate({
+        path: 'assignmentId',
+        populate: {
+          path: 'subAssignments'
+        }
+      });
+
+    if (!submission) {
+      return res.status(404).json({ error: "Submission not found" });
+    }
+
+    const assignment = submission.assignmentId;
+    if (!assignment) {
+      return res.status(404).json({ error: "Assignment not found" });
+    }
+
+    // Prepare the response structure
+    const result = {
+      submissionId: submission._id,
+      studentId: submission.studentId,
+      assignmentId: submission.assignmentId._id,
+      moduleName: assignment.moduleName,
+      category: assignment.category,
+      overallProgress: submission.overallProgress,
+      totalCorrect: submission.totalCorrect,
+      totalWrong: submission.totalWrong,
+      submissionDate: submission.submissionDate,
+      assignments: []
+    };
+
+    // Process parent assignment (if it has answers)
+    if (assignment.answerKey || assignment.dynamicQuestions?.length > 0) {
+      const parentSubmission = submission.submittedAnswers.find(
+        ans => ans.subAssignmentId === null
+      );
+
+      result.assignments.push({
+        type: "parent",
+        subAssignmentId: null,
+        subModuleName: assignment.moduleName,
+        assignmentPdf: assignment.assignmentPdf,
+        submittedAnswers: parentSubmission || null,
+        correctAnswers: {
+          patientName: assignment.answerKey?.patientName || null,
+          ageOrDob: assignment.answerKey?.ageOrDob || null,
+          icdCodes: assignment.answerKey?.icdCodes || [],
+          cptCodes: assignment.answerKey?.cptCodes || [],
+          notes: assignment.answerKey?.notes || null,
+          dynamicQuestions: assignment.dynamicQuestions?.map(q => ({
+            questionText: q.questionText,
+            type: q.type || "dynamic",
+            options: q.options || [],
+            correctAnswer: q.answer
+          })) || []
+        }
+      });
+    }
+
+    // Process sub-assignments
+    for (const subAssignment of assignment.subAssignments) {
+      const subSubmission = submission.submittedAnswers.find(
+        ans => ans.subAssignmentId && 
+               ans.subAssignmentId.toString() === subAssignment._id.toString()
+      );
+
+      result.assignments.push({
+        type: "sub",
+        subAssignmentId: subAssignment._id,
+        subModuleName: subAssignment.subModuleName,
+        assignmentPdf: subAssignment.assignmentPdf,
+        submittedAnswers: subSubmission || null,
+        correctAnswers: {
+          patientName: subAssignment.answerKey?.patientName || null,
+          ageOrDob: subAssignment.answerKey?.ageOrDob || null,
+          icdCodes: subAssignment.answerKey?.icdCodes || [],
+          cptCodes: subAssignment.answerKey?.cptCodes || [],
+          notes: subAssignment.answerKey?.notes || null,
+          dynamicQuestions: subAssignment.dynamicQuestions?.map(q => ({
+            questionText: q.questionText,
+            type: q.type || "dynamic",
+            options: q.options || [],
+            correctAnswer: q.answer
+          })) || []
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      data: result
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
