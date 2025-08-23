@@ -844,113 +844,192 @@ function arraysMatchIgnoreOrder(a = [], b = []) {
 
 
 
-
-
-// Main: Get submissions for assignmentId
+// Main: Get submissions for assignmentId (shaped to your required response)
 exports.getAssignmentSubmissions = async (req, res) => {
   try {
     const { assignmentId } = req.params;
 
-    // Load assignment definition
+    // 1) Load assignment definition (with sub-assignments and their answer keys)
     const assignment = await Assignment.findById(assignmentId).lean();
     if (!assignment) {
       return res.status(404).json({ error: "Assignment not found" });
     }
 
-    // Fetch all submissions for this assignment
+    // Optional: Some schemas use different field names for sub-assignment title
+    const getSubModuleName = (defSub) =>
+      defSub?.subModuleName || defSub?.name || defSub?.title || "";
+
+    // Build a parentSummary from assignment-level answerKey (or default empty)
+    const parentAnswerKey = assignment?.answerKey || {
+      patientName: "",
+      ageOrDob: "",
+      icdCodes: [],
+      cptCodes: [],
+      notes: "",
+      dynamicQuestions: [],
+    };
+
+    const parentSummary = {
+      enteredValues: null, // you can fill this later if you add top-level inputs
+      answerKey: {
+        patientName: parentAnswerKey.patientName ?? "",
+        ageOrDob: parentAnswerKey.ageOrDob ?? "",
+        icdCodes: parentAnswerKey.icdCodes ?? [],
+        cptCodes: parentAnswerKey.cptCodes ?? [],
+        notes: parentAnswerKey.notes ?? "",
+        dynamicQuestions: (parentAnswerKey.dynamicQuestions ?? []).map((q) => ({
+          questionText: q.questionText,
+          options: q.options ?? [],
+          answer: q.answer,
+          _id: q._id,
+        })),
+      },
+      correctCount: 0,
+      wrongCount: 0,
+      progressPercent: 0,
+    };
+
+    // 2) Fetch submissions for this assignment (with student populated if needed)
     const submissions = await Submission.find({ assignmentId })
       .populate("studentId", "name courseName")
       .lean();
 
-    // Prepare output
-    const results = submissions.map(sub => {
-      const student = sub.studentId || {};
+    // 3) Transform each student's submission into required shape
+    const results = submissions.map((sub) => {
       let totalCorrect = 0;
       let totalWrong = 0;
 
-      // Compare each submitted sub-assignment with answerKey
-      const detailedSubs = (sub.submittedAnswers || []).map(sa => {
-        // Find matching sub-assignment definition
+      const subModulesSummary = (sub.submittedAnswers || []).map((sa) => {
+        // Find the corresponding sub-assignment definition
         const defSub = (assignment.subAssignments || []).find(
-          s => s._id.toString() === sa.subAssignmentId.toString()
+          (s) => s._id.toString() === sa.subAssignmentId?.toString()
         );
 
+        const defKey = defSub?.answerKey || {
+          patientName: "",
+          ageOrDob: "",
+          icdCodes: [],
+          cptCodes: [],
+          notes: "",
+        };
+
+        // Prepare dynamic question comparisons
+        const comparedDynamic = (sa.dynamicQuestions || []).map((dq, idx) => {
+          const defQ = (defSub?.dynamicQuestions || [])[idx];
+          const isCorrect = defQ
+            ? textMatchIgnoreCase(dq.submittedAnswer, defQ.answer)
+            : false;
+          return {
+            // For "enteredValues.dynamicQuestions" (your sample includes type/options/correctAnswer/submittedAnswer/isCorrect)
+            entered: {
+              questionText: defQ?.questionText || dq.questionText,
+              type: dq.type || "dynamic",
+              options: defQ?.options || dq.options || [],
+              correctAnswer: defQ?.answer ?? null,
+              submittedAnswer: dq.submittedAnswer ?? null,
+              isCorrect,
+              _id: dq._id,
+            },
+            // For "answerKey.dynamicQuestions" (your sample uses {questionText, options, answer, _id})
+            key: defQ
+              ? {
+                  questionText: defQ.questionText,
+                  options: defQ.options || [],
+                  answer: defQ.answer,
+                  _id: defQ._id,
+                }
+              : null,
+            isCorrect,
+          };
+        });
+
+        // Count correctness (static fields)
         let correctCount = 0;
         let wrongCount = 0;
 
-        // Compare static fields
         if (defSub) {
-          if (textMatchIgnoreCase(sa.patientName, defSub.answerKey.patientName)) {
-            correctCount++;
-          } else wrongCount++;
+          if (textMatchIgnoreCase(sa.patientName, defKey.patientName)) correctCount++;
+          else wrongCount++;
 
-          if (textMatchIgnoreCase(sa.ageOrDob, defSub.answerKey.ageOrDob)) {
-            correctCount++;
-          } else wrongCount++;
+          if (textMatchIgnoreCase(sa.ageOrDob, defKey.ageOrDob)) correctCount++;
+          else wrongCount++;
 
-          if (arraysMatchIgnoreOrder(sa.icdCodes, defSub.answerKey.icdCodes)) {
-            correctCount++;
-          } else wrongCount++;
+          if (arraysMatchIgnoreOrder(sa.icdCodes, defKey.icdCodes)) correctCount++;
+          else wrongCount++;
 
-          if (arraysMatchIgnoreOrder(sa.cptCodes, defSub.answerKey.cptCodes)) {
-            correctCount++;
-          } else wrongCount++;
+          if (arraysMatchIgnoreOrder(sa.cptCodes, defKey.cptCodes)) correctCount++;
+          else wrongCount++;
 
-          if (textMatchIgnoreCase(sa.notes, defSub.answerKey.notes)) {
-            correctCount++;
-          } else wrongCount++;
+          if (textMatchIgnoreCase(sa.notes, defKey.notes)) correctCount++;
+          else wrongCount++;
 
-          // Compare dynamic questions
-          const dqDetails = (sa.dynamicQuestions || []).map((dq, idx) => {
-            const defQ = defSub.dynamicQuestions[idx];
-            const isCorrect = defQ
-              ? textMatchIgnoreCase(dq.submittedAnswer, defQ.answer)
-              : false;
-
-            if (isCorrect) correctCount++;
-            else wrongCount++;
-
-            return {
-              questionText: defQ?.questionText || dq.questionText,
-              correctAnswer: defQ?.answer,
-              submittedAnswer: dq.submittedAnswer,
-              isCorrect,
-            };
-          });
-
-          sa.dynamicQuestions = dqDetails;
+          // Count dynamic
+          comparedDynamic.forEach((d) => (d.isCorrect ? correctCount++ : wrongCount++));
         }
 
-        sa.correctCount = correctCount;
-        sa.wrongCount = wrongCount;
-        sa.progressPercent =
+        const progressPercent =
           correctCount + wrongCount > 0
             ? Math.round((correctCount / (correctCount + wrongCount)) * 100)
             : 0;
 
+        // Build "enteredValues" block as in your sample
+        const enteredValues = {
+          patientName: sa.patientName ?? null,
+          ageOrDob: sa.ageOrDob ?? null,
+          icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
+          cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
+          notes: sa.notes ?? null,
+          dynamicQuestions: comparedDynamic.map((d) => d.entered),
+        };
+
+        // Build "answerKey" block as in your sample
+        const answerKeyBlock = {
+          patientName: defKey.patientName ?? "",
+          ageOrDob: defKey.ageOrDob ?? "",
+          icdCodes: defKey.icdCodes ?? [],
+          cptCodes: defKey.cptCodes ?? [],
+          notes: defKey.notes ?? "",
+          dynamicQuestions: comparedDynamic
+            .map((d) => d.key)
+            .filter(Boolean), // remove nulls if any
+        };
+
         totalCorrect += correctCount;
         totalWrong += wrongCount;
 
-        return sa;
+        return {
+          subAssignmentId: sa.subAssignmentId,
+          subModuleName: getSubModuleName(defSub),
+          enteredValues,
+          answerKey: answerKeyBlock,
+          correctCount,
+          wrongCount,
+          progressPercent,
+        };
       });
 
+      const overallProgress =
+        totalCorrect + totalWrong > 0
+          ? Math.round((totalCorrect / (totalCorrect + totalWrong)) * 100)
+          : 0;
+
       return {
-        studentId: student._id,
-        studentName: student.name,
-        courseName: student.courseName,
+        studentId: sub.studentId?._id || null,
         assignmentId: sub.assignmentId,
-        submittedAnswers: detailedSubs,
         totalCorrect,
         totalWrong,
-        overallProgress:
-          totalCorrect + totalWrong > 0
-            ? Math.round((totalCorrect / (totalCorrect + totalWrong)) * 100)
-            : 0,
-        submissionDate: sub.submissionDate,
+        overallProgress,
+        parentSummary,
+        subModulesSummary,
       };
     });
 
-    res.json({ assignmentId, moduleName: assignment.moduleName, results });
+    // 4) Response
+    res.json({
+      assignmentId,
+      moduleName: assignment.moduleName,
+      results,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
