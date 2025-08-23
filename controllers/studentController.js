@@ -726,7 +726,7 @@ exports.getStudentsWithSummary = async (req, res) => {
           paidAmount: student.paidAmount,
           remainingAmount: student.remainingAmount,
           enrolledDate: student.enrolledDate,
-
+           expiryDate: student.expiryDate,
           assignedAssignmentsCount,
           submittedCount,
           notSubmittedCount,
