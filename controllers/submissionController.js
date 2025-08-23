@@ -28,6 +28,12 @@ exports.submitAssignment = async (req, res) => {
   try {
     const { studentId, assignmentId, submittedAnswers } = req.body;
 
+
+    // Get student to retrieve expiry date
+    const student = await Student.findById(studentId);
+    if (!student) return res.status(404).json({ error: "Student not found" });
+
+
     const assignment = await Assignment.findById(assignmentId);
     if (!assignment) return res.status(404).json({ error: "Assignment not found" });
 
@@ -40,7 +46,8 @@ exports.submitAssignment = async (req, res) => {
         submittedAnswers: [],
         totalCorrect: 0,
         totalWrong: 0,
-        overallProgress: 0
+        overallProgress: 0,
+expiresAt: student.expiryDate 
       });
     }
 
