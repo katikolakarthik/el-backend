@@ -844,22 +844,16 @@ function arraysMatchIgnoreOrder(a = [], b = []) {
 
 
 
-// Main: Get submissions for assignmentId (shaped to your required response)
 exports.getAssignmentSubmissions = async (req, res) => {
   try {
     const { assignmentId } = req.params;
 
-    // 1) Load assignment definition (with sub-assignments and their answer keys)
     const assignment = await Assignment.findById(assignmentId).lean();
-    if (!assignment) {
-      return res.status(404).json({ error: "Assignment not found" });
-    }
+    if (!assignment) return res.status(404).json({ error: "Assignment not found" });
 
-    // Optional: Some schemas use different field names for sub-assignment title
     const getSubModuleName = (defSub) =>
       defSub?.subModuleName || defSub?.name || defSub?.title || "";
 
-    // Build a parentSummary from assignment-level answerKey (or default empty)
     const parentAnswerKey = assignment?.answerKey || {
       patientName: "",
       ageOrDob: "",
@@ -869,85 +863,85 @@ exports.getAssignmentSubmissions = async (req, res) => {
       dynamicQuestions: [],
     };
 
-    const parentSummary = {
-      enteredValues: null, // you can fill this later if you add top-level inputs
-      answerKey: {
-        patientName: parentAnswerKey.patientName ?? "",
-        ageOrDob: parentAnswerKey.ageOrDob ?? "",
-        icdCodes: parentAnswerKey.icdCodes ?? [],
-        cptCodes: parentAnswerKey.cptCodes ?? [],
-        notes: parentAnswerKey.notes ?? "",
-        dynamicQuestions: (parentAnswerKey.dynamicQuestions ?? []).map((q) => ({
-          questionText: q.questionText,
-          options: q.options ?? [],
-          answer: q.answer,
-          _id: q._id,
-        })),
-      },
-      correctCount: 0,
-      wrongCount: 0,
-      progressPercent: 0,
-    };
-
-    // 2) Fetch submissions for this assignment (with student populated if needed)
     const submissions = await Submission.find({ assignmentId })
       .populate("studentId", "name courseName")
       .lean();
 
-    // 3) Transform each student's submission into required shape
     const results = submissions.map((sub) => {
       let totalCorrect = 0;
       let totalWrong = 0;
 
-      const subModulesSummary = (sub.submittedAnswers || []).map((sa) => {
-        // Find the corresponding sub-assignment definition
+      // Initialize parent summary with only the answerKey
+      const parentSummary = {
+        enteredValues: null, // will be filled if we detect a parent-level entry
+        answerKey: {
+          patientName: parentAnswerKey.patientName ?? "",
+          ageOrDob: parentAnswerKey.ageOrDob ?? "",
+          icdCodes: parentAnswerKey.icdCodes ?? [],
+          cptCodes: parentAnswerKey.cptCodes ?? [],
+          notes: parentAnswerKey.notes ?? "",
+          dynamicQuestions: (parentAnswerKey.dynamicQuestions ?? []).map((q) => ({
+            questionText: q.questionText,
+            options: q.options ?? [],
+            answer: q.answer,
+            _id: q._id,
+          })),
+        },
+        correctCount: 0,
+        wrongCount: 0,
+        progressPercent: 0,
+      };
+
+      const subModulesSummary = [];
+
+      // For each submitted "answer group"
+      (sub.submittedAnswers || []).forEach((sa) => {
+        // Try to resolve as a sub-assignment
         const defSub = (assignment.subAssignments || []).find(
-          (s) => s._id.toString() === sa.subAssignmentId?.toString()
+          (s) => sa.subAssignmentId && s._id.toString() === sa.subAssignmentId.toString()
         );
 
-        const defKey = defSub?.answerKey || {
-          patientName: "",
-          ageOrDob: "",
-          icdCodes: [],
-          cptCodes: [],
-          notes: "",
-        };
-
-        // Prepare dynamic question comparisons
-        const comparedDynamic = (sa.dynamicQuestions || []).map((dq, idx) => {
-          const defQ = (defSub?.dynamicQuestions || [])[idx];
-          const isCorrect = defQ
-            ? textMatchIgnoreCase(dq.submittedAnswer, defQ.answer)
-            : false;
-          return {
-            // For "enteredValues.dynamicQuestions" (your sample includes type/options/correctAnswer/submittedAnswer/isCorrect)
-            entered: {
-              questionText: defQ?.questionText || dq.questionText,
-              type: dq.type || "dynamic",
-              options: defQ?.options || dq.options || [],
-              correctAnswer: defQ?.answer ?? null,
-              submittedAnswer: dq.submittedAnswer ?? null,
-              isCorrect,
-              _id: dq._id,
-            },
-            // For "answerKey.dynamicQuestions" (your sample uses {questionText, options, answer, _id})
-            key: defQ
-              ? {
-                  questionText: defQ.questionText,
-                  options: defQ.options || [],
-                  answer: defQ.answer,
-                  _id: defQ._id,
-                }
-              : null,
-            isCorrect,
-          };
-        });
-
-        // Count correctness (static fields)
-        let correctCount = 0;
-        let wrongCount = 0;
-
+        // ---------- CASE A: TRUE SUB-ASSIGNMENT ----------
         if (defSub) {
+          const defKey = defSub.answerKey || {
+            patientName: "",
+            ageOrDob: "",
+            icdCodes: [],
+            cptCodes: [],
+            notes: "",
+          };
+
+          // Compare dynamic questions (index-based)
+          const comparedDynamic = (sa.dynamicQuestions || []).map((dq, idx) => {
+            const defQ = (defSub.dynamicQuestions || [])[idx];
+            const isCorrect = defQ
+              ? textMatchIgnoreCase(dq.submittedAnswer, defQ.answer)
+              : false;
+            return {
+              entered: {
+                questionText: defQ?.questionText || dq.questionText,
+                type: dq.type || "dynamic",
+                options: defQ?.options || dq.options || [],
+                correctAnswer: defQ?.answer ?? null,
+                submittedAnswer: dq.submittedAnswer ?? null,
+                isCorrect,
+                _id: dq._id,
+              },
+              key: defQ
+                ? {
+                    questionText: defQ.questionText,
+                    options: defQ.options || [],
+                    answer: defQ.answer,
+                    _id: defQ._id,
+                  }
+                : null,
+              isCorrect,
+            };
+          });
+
+          let correctCount = 0;
+          let wrongCount = 0;
+
           if (textMatchIgnoreCase(sa.patientName, defKey.patientName)) correctCount++;
           else wrongCount++;
 
@@ -963,49 +957,110 @@ exports.getAssignmentSubmissions = async (req, res) => {
           if (textMatchIgnoreCase(sa.notes, defKey.notes)) correctCount++;
           else wrongCount++;
 
-          // Count dynamic
           comparedDynamic.forEach((d) => (d.isCorrect ? correctCount++ : wrongCount++));
+
+          const progressPercent =
+            correctCount + wrongCount > 0
+              ? Math.round((correctCount / (correctCount + wrongCount)) * 100)
+              : 0;
+
+          subModulesSummary.push({
+            subAssignmentId: sa.subAssignmentId,
+            subModuleName: getSubModuleName(defSub),
+            enteredValues: {
+              patientName: sa.patientName ?? null,
+              ageOrDob: sa.ageOrDob ?? null,
+              icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
+              cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
+              notes: sa.notes ?? null,
+              dynamicQuestions: comparedDynamic.map((d) => d.entered),
+            },
+            answerKey: {
+              patientName: defKey.patientName ?? "",
+              ageOrDob: defKey.ageOrDob ?? "",
+              icdCodes: defKey.icdCodes ?? [],
+              cptCodes: defKey.cptCodes ?? [],
+              notes: defKey.notes ?? "",
+              dynamicQuestions: comparedDynamic
+                .map((d) => d.key)
+                .filter(Boolean),
+            },
+            correctCount,
+            wrongCount,
+            progressPercent,
+          });
+
+          totalCorrect += correctCount;
+          totalWrong += wrongCount;
+          return; // done with CASE A
         }
 
-        const progressPercent =
-          correctCount + wrongCount > 0
-            ? Math.round((correctCount / (correctCount + wrongCount)) * 100)
+        // ---------- CASE B: PARENT-LEVEL ONLY ----------
+        // No matching sub-assignment -> treat this as the parent-level submission.
+        // Compare against parentAnswerKey and fill parentSummary.enteredValues
+        const parentComparedDynamic = (sa.dynamicQuestions || []).map((dq, idx) => {
+          // Prefer assignment-level explicit dynamicQuestions; else use answerKey's
+          const defQ =
+            (assignment.dynamicQuestions || [])[idx] ||
+            (parentAnswerKey.dynamicQuestions || [])[idx];
+          const isCorrect = defQ
+            ? textMatchIgnoreCase(dq.submittedAnswer, defQ.answer)
+            : false;
+          return {
+            entered: {
+              questionText: defQ?.questionText || dq.questionText,
+              type: dq.type || "dynamic",
+              options: defQ?.options || dq.options || [],
+              correctAnswer: defQ?.answer ?? null,
+              submittedAnswer: dq.submittedAnswer ?? null,
+              isCorrect,
+              _id: dq._id,
+            },
+            isCorrect,
+          };
+        });
+
+        let pCorrect = 0;
+        let pWrong = 0;
+
+        if (textMatchIgnoreCase(sa.patientName, parentAnswerKey.patientName)) pCorrect++;
+        else pWrong++;
+
+        if (textMatchIgnoreCase(sa.ageOrDob, parentAnswerKey.ageOrDob)) pCorrect++;
+        else pWrong++;
+
+        if (arraysMatchIgnoreOrder(sa.icdCodes, parentAnswerKey.icdCodes)) pCorrect++;
+        else pWrong++;
+
+        if (arraysMatchIgnoreOrder(sa.cptCodes, parentAnswerKey.cptCodes)) pCorrect++;
+        else pWrong++;
+
+        if (textMatchIgnoreCase(sa.notes, parentAnswerKey.notes)) pCorrect++;
+        else pWrong++;
+
+        parentComparedDynamic.forEach((d) => (d.isCorrect ? pCorrect++ : pWrong++));
+
+        const pProgress =
+          pCorrect + pWrong > 0
+            ? Math.round((pCorrect / (pCorrect + pWrong)) * 100)
             : 0;
 
-        // Build "enteredValues" block as in your sample
-        const enteredValues = {
+        parentSummary.enteredValues = {
           patientName: sa.patientName ?? null,
           ageOrDob: sa.ageOrDob ?? null,
           icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
           cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
           notes: sa.notes ?? null,
-          dynamicQuestions: comparedDynamic.map((d) => d.entered),
+          dynamicQuestions: parentComparedDynamic.map((d) => d.entered),
         };
+        parentSummary.correctCount = pCorrect;
+        parentSummary.wrongCount = pWrong;
+        parentSummary.progressPercent = pProgress;
 
-        // Build "answerKey" block as in your sample
-        const answerKeyBlock = {
-          patientName: defKey.patientName ?? "",
-          ageOrDob: defKey.ageOrDob ?? "",
-          icdCodes: defKey.icdCodes ?? [],
-          cptCodes: defKey.cptCodes ?? [],
-          notes: defKey.notes ?? "",
-          dynamicQuestions: comparedDynamic
-            .map((d) => d.key)
-            .filter(Boolean), // remove nulls if any
-        };
+        totalCorrect += pCorrect;
+        totalWrong += pWrong;
 
-        totalCorrect += correctCount;
-        totalWrong += wrongCount;
-
-        return {
-          subAssignmentId: sa.subAssignmentId,
-          subModuleName: getSubModuleName(defSub),
-          enteredValues,
-          answerKey: answerKeyBlock,
-          correctCount,
-          wrongCount,
-          progressPercent,
-        };
+        // IMPORTANT: do NOT push anything into subModulesSummary here.
       });
 
       const overallProgress =
@@ -1024,7 +1079,6 @@ exports.getAssignmentSubmissions = async (req, res) => {
       };
     });
 
-    // 4) Response
     res.json({
       assignmentId,
       moduleName: assignment.moduleName,
