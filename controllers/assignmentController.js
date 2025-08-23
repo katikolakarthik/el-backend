@@ -476,104 +476,146 @@ exports.getAssignmentDetailsForStudent = async (req, res) => {
 
 
 // Get all assignments by category
+// Get all assignments by category
 exports.getAssignmentsByCategory = async (req, res) => {
   try {
     const { category } = req.params;
-    
-    if (!category) {
+    const { studentId } = req.query; // Get studentId from query params
+
+    if (!category) {  
+      return res.status(400).json({  
+        success: false,  
+        message: "Category parameter is required"  
+      });  
+    }
+
+    if (!studentId) {
       return res.status(400).json({
         success: false,
-        message: "Category parameter is required"
+        message: "Student ID is required to check completion status"
       });
     }
 
-    // Find all assignments for the given category
-    const assignments = await Assignment.find({ 
-      category: category.trim().toUpperCase() 
+    // Find all assignments for the given category  
+    const assignments = await Assignment.find({   
+      category: category.trim().toUpperCase()   
     }).populate("assignedStudents");
 
-    if (!assignments || assignments.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: `No assignments found for category: ${category}`
-      });
+    if (!assignments || assignments.length === 0) {  
+      return res.status(404).json({  
+        success: false,  
+        message: `No assignments found for category: ${category}`  
+      });  
     }
 
-    // Helper: format predefined answers
-    const formatPredefined = (answerKey) => {
-      if (!answerKey) return [];
-      const hasData =
-        answerKey.patientName ||
-        answerKey.ageOrDob ||
-        (answerKey.icdCodes && answerKey.icdCodes.length) ||
-        (answerKey.cptCodes && answerKey.cptCodes.length) ||
-        answerKey.notes;
+    // Check submissions for this student
+    const submissions = await Submission.find({
+      studentId: studentId,
+      assignmentId: { $in: assignments.map(a => a._id) }
+    });
 
-      return hasData
-        ? [{
-            type: "predefined",
-            answerKey
-          }]
-        : [];
+    // Helper: format predefined answers  
+    const formatPredefined = (answerKey) => {  
+      if (!answerKey) return [];  
+      const hasData =  
+        answerKey.patientName ||  
+        answerKey.ageOrDob ||  
+        (answerKey.icdCodes && answerKey.icdCodes.length) ||  
+        (answerKey.cptCodes && answerKey.cptCodes.length) ||  
+        answerKey.notes;  
+
+      return hasData  
+        ? [{  
+            type: "predefined",  
+            answerKey  
+          }]  
+        : [];  
     };
 
-    // Helper: format dynamic questions
-    const formatDynamic = (dynamicQuestions) => {
-      if (!dynamicQuestions || !dynamicQuestions.length) return [];
-      return dynamicQuestions.map(q => ({
-        type: "dynamic",
-        questionText: q.questionText,
-        options: q.options || [],
-        answer: q.answer
-      }));
+    // Helper: format dynamic questions  
+    const formatDynamic = (dynamicQuestions) => {  
+      if (!dynamicQuestions || !dynamicQuestions.length) return [];  
+      return dynamicQuestions.map(q => ({  
+        type: "dynamic",  
+        questionText: q.questionText,  
+        options: q.options || [],  
+        answer: q.answer  
+      }));  
     };
 
-    // Format all assignments for response
-    const formattedAssignments = assignments.map(assignment => ({
-      _id: assignment._id,
-      moduleName: assignment.moduleName,
-      category: assignment.category,
-      assignedStudents: assignment.assignedStudents,
-      assignedDate: assignment.assignedDate,
-      assignmentPdf: assignment.assignmentPdf || null,
+    // Helper: check if parent assignment is completed
+    const isParentCompleted = (assignmentId) => {
+      const submission = submissions.find(sub => 
+        sub.assignmentId.toString() === assignmentId.toString()
+      );
+      return !!submission;
+    };
 
-      // Parent-level questions
-      questions: [
-        ...formatPredefined(assignment.answerKey),
-        ...formatDynamic(assignment.dynamicQuestions)
-      ],
-      dynamicAnswerKey: assignment.dynamicQuestions?.map(q => ({
-        questionText: q.questionText,
-        answer: q.answer
-      })) || [],
+    // Helper: check if sub-assignment is completed
+    const isSubAssignmentCompleted = (assignmentId, subAssignmentId) => {
+      const submission = submissions.find(sub => 
+        sub.assignmentId.toString() === assignmentId.toString()
+      );
+      
+      if (!submission) return false;
+      
+      return submission.submittedAnswers.some(answer => 
+        answer.subAssignmentId.toString() === subAssignmentId.toString()
+      );
+    };
 
-      // Sub-assignments
-      subAssignments: assignment.subAssignments.map(sa => ({
-        _id: sa._id,
-        subModuleName: sa.subModuleName,
-        assignmentPdf: sa.assignmentPdf || null,
-        questions: [
-          ...formatPredefined(sa.answerKey),
-          ...formatDynamic(sa.dynamicQuestions)
+    // Format all assignments for response  
+    const formattedAssignments = assignments.map(assignment => {
+      const parentCompleted = isParentCompleted(assignment._id);
+      
+      return {
+        _id: assignment._id,
+        moduleName: assignment.moduleName,
+        category: assignment.category,
+        assignedStudents: assignment.assignedStudents,
+        assignedDate: assignment.assignedDate,
+        assignmentPdf: assignment.assignmentPdf || null,
+        isCompleted: parentCompleted, // Parent completion status
+
+        // Parent-level questions  
+        questions: [  
+          ...formatPredefined(assignment.answerKey),  
+          ...formatDynamic(assignment.dynamicQuestions)  
         ],
-        dynamicAnswerKey: sa.dynamicQuestions?.map(q => ({
-          questionText: q.questionText,
-          answer: q.answer
-        })) || []
-      }))
-    }));
+        dynamicAnswerKey: assignment.dynamicQuestions?.map(q => ({  
+          questionText: q.questionText,  
+          answer: q.answer  
+        })) || [],  
 
-    res.json({
-      success: true,
-      count: formattedAssignments.length,
-      category: category.toUpperCase(),
-      assignments: formattedAssignments
+        // Sub-assignments  
+        subAssignments: assignment.subAssignments.map(sa => ({
+          _id: sa._id,
+          subModuleName: sa.subModuleName,
+          assignmentPdf: sa.assignmentPdf || null,
+          isCompleted: isSubAssignmentCompleted(assignment._id, sa._id), // Sub-assignment completion status
+          questions: [  
+            ...formatPredefined(sa.answerKey),  
+            ...formatDynamic(sa.dynamicQuestions)  
+          ],
+          dynamicAnswerKey: sa.dynamicQuestions?.map(q => ({  
+            questionText: q.questionText,  
+            answer: q.answer  
+          })) || []  
+        }))  
+      };
+    });
+
+    res.json({  
+      success: true,  
+      count: formattedAssignments.length,  
+      category: category.toUpperCase(),  
+      assignments: formattedAssignments  
     });
 
   } catch (err) {
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: err.message 
+      error: err.message
     });
   }
 };
