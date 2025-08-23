@@ -822,3 +822,116 @@ exports.getDetailedAssignmentStats = async (req, res) => {
     });
   }
 };
+
+
+
+
+// Main: Get submissions for assignmentId
+exports.getAssignmentSubmissions = async (req, res) => {
+  try {
+    const { assignmentId } = req.params;
+
+    // Load assignment definition
+    const assignment = await Assignment.findById(assignmentId).lean();
+    if (!assignment) {
+      return res.status(404).json({ error: "Assignment not found" });
+    }
+
+    // Fetch all submissions for this assignment
+    const submissions = await Submission.find({ assignmentId })
+      .populate("studentId", "name courseName")
+      .lean();
+
+    // Prepare output
+    const results = submissions.map(sub => {
+      const student = sub.studentId || {};
+      let totalCorrect = 0;
+      let totalWrong = 0;
+
+      // Compare each submitted sub-assignment with answerKey
+      const detailedSubs = (sub.submittedAnswers || []).map(sa => {
+        // Find matching sub-assignment definition
+        const defSub = (assignment.subAssignments || []).find(
+          s => s._id.toString() === sa.subAssignmentId.toString()
+        );
+
+        let correctCount = 0;
+        let wrongCount = 0;
+
+        // Compare static fields
+        if (defSub) {
+          if (textMatchIgnoreCase(sa.patientName, defSub.answerKey.patientName)) {
+            correctCount++;
+          } else wrongCount++;
+
+          if (textMatchIgnoreCase(sa.ageOrDob, defSub.answerKey.ageOrDob)) {
+            correctCount++;
+          } else wrongCount++;
+
+          if (arraysMatchIgnoreOrder(sa.icdCodes, defSub.answerKey.icdCodes)) {
+            correctCount++;
+          } else wrongCount++;
+
+          if (arraysMatchIgnoreOrder(sa.cptCodes, defSub.answerKey.cptCodes)) {
+            correctCount++;
+          } else wrongCount++;
+
+          if (textMatchIgnoreCase(sa.notes, defSub.answerKey.notes)) {
+            correctCount++;
+          } else wrongCount++;
+
+          // Compare dynamic questions
+          const dqDetails = (sa.dynamicQuestions || []).map((dq, idx) => {
+            const defQ = defSub.dynamicQuestions[idx];
+            const isCorrect = defQ
+              ? textMatchIgnoreCase(dq.submittedAnswer, defQ.answer)
+              : false;
+
+            if (isCorrect) correctCount++;
+            else wrongCount++;
+
+            return {
+              questionText: defQ?.questionText || dq.questionText,
+              correctAnswer: defQ?.answer,
+              submittedAnswer: dq.submittedAnswer,
+              isCorrect,
+            };
+          });
+
+          sa.dynamicQuestions = dqDetails;
+        }
+
+        sa.correctCount = correctCount;
+        sa.wrongCount = wrongCount;
+        sa.progressPercent =
+          correctCount + wrongCount > 0
+            ? Math.round((correctCount / (correctCount + wrongCount)) * 100)
+            : 0;
+
+        totalCorrect += correctCount;
+        totalWrong += wrongCount;
+
+        return sa;
+      });
+
+      return {
+        studentId: student._id,
+        studentName: student.name,
+        courseName: student.courseName,
+        assignmentId: sub.assignmentId,
+        submittedAnswers: detailedSubs,
+        totalCorrect,
+        totalWrong,
+        overallProgress:
+          totalCorrect + totalWrong > 0
+            ? Math.round((totalCorrect / (totalCorrect + totalWrong)) * 100)
+            : 0,
+        submissionDate: sub.submissionDate,
+      };
+    });
+
+    res.json({ assignmentId, moduleName: assignment.moduleName, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
