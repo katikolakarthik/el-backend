@@ -34,18 +34,23 @@ const subAnswerSchema = new mongoose.Schema({
   progressPercent: Number
 });
 
+
 const submissionSchema = new mongoose.Schema({
   studentId: { type: mongoose.Schema.Types.ObjectId, ref: "Student" },
   assignmentId: { type: mongoose.Schema.Types.ObjectId, ref: "Assignment" },
-
-  submittedAnswers: [subAnswerSchema], // Array of answers for each sub-assignment
-
-  // Totals across all subs
+  submittedAnswers: [subAnswerSchema],
   totalCorrect: Number,
   totalWrong: Number,
   overallProgress: Number,
-
-  submissionDate: { type: Date, default: Date.now }
+  submissionDate: { type: Date, default: Date.now },
+  // Add TTL field that references student expiry
+  expiresAt: { type: Date, index: { expireAfterSeconds: 0 } }
 });
+
+
+
+// Create TTL index
+submissionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
 
 module.exports = mongoose.model("Submission", submissionSchema);
