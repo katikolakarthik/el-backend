@@ -1,6 +1,7 @@
 // controllers/submissionController.js
 const Submission = require("../models/Submission");
 const Assignment = require("../models/Assignment");
+const Student = require("../models/Student");
 
 // Helper: compare strings ignoring case and extra spaces
 function textMatchIgnoreCase(a, b) {
