@@ -1069,14 +1069,16 @@ exports.getAssignmentSubmissions = async (req, res) => {
           : 0;
 
       return {
-        studentId: sub.studentId?._id || null,
-        assignmentId: sub.assignmentId,
-        totalCorrect,
-        totalWrong,
-        overallProgress,
-        parentSummary,
-        subModulesSummary,
-      };
+  studentId: sub.studentId?._id || null,
+  studentName: sub.studentId?.name || null,
+  courseName: sub.studentId?.courseName || null,
+  assignmentId: sub.assignmentId,
+  totalCorrect,
+  totalWrong,
+  overallProgress,
+  parentSummary,
+  subModulesSummary,
+};
     });
 
     res.json({
