@@ -1,8 +1,71 @@
+// controllers/assignmentController.js
 const Assignment = require("../models/Assignment");
 const Submission = require("../models/Submission");
 const mongoose = require("mongoose");
 
+/* ----------------------------- Util helpers ------------------------------ */
 
+const toUpperTrim = (v) => (v || "").toString().trim().toUpperCase();
+
+const parseCsv = (str) =>
+  (str || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+function textMatchIgnoreCase(a, b) {
+  const strA = (a ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+  const strB = (b ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+  return strA === strB;
+}
+
+function arraysMatchIgnoreOrder(a = [], b = []) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  const sortedA = a.map((v) => (v ?? "").toString().trim().toLowerCase()).sort();
+  const sortedB = b.map((v) => (v ?? "").toString().trim().toLowerCase()).sort();
+  return sortedA.every((val, idx) => val === sortedB[idx]);
+}
+
+/* Merge/format helpers used in getters */
+const hasPredefinedData = (answerKey) => {
+  if (!answerKey) return false;
+  return (
+    answerKey.patientName ||
+    answerKey.ageOrDob ||
+    (answerKey.icdCodes && answerKey.icdCodes.length) ||
+    (answerKey.cptCodes && answerKey.cptCodes.length) ||
+    (answerKey.pcsCodes && answerKey.pcsCodes.length) ||
+    (answerKey.hcpcsCodes && answerKey.hcpcsCodes.length) ||
+    answerKey.drgValue ||
+    (answerKey.modifiers && answerKey.modifiers.length) ||
+    answerKey.notes
+  );
+};
+
+const formatPredefinedOut = (answerKey) =>
+  hasPredefinedData(answerKey)
+    ? [
+        {
+          type: "predefined",
+          answerKey,
+        },
+      ]
+    : [];
+
+const formatDynamicOut = (dynamicQuestions) => {
+  if (!dynamicQuestions || !dynamicQuestions.length) return [];
+  return dynamicQuestions.map((q) => ({
+    type: "dynamic",
+    questionText: q.questionText,
+    options: q.options || [],
+    answer: q.answer,
+  }));
+};
+
+/* ----------------------------- Controllers ------------------------------- */
+
+// Create assignment (supports parent-level or multiple sub-assignments)
 exports.addAssignment = async (req, res) => {
   try {
     const { moduleName, subAssignments, category } = req.body;
@@ -12,31 +75,34 @@ exports.addAssignment = async (req, res) => {
       return res.status(400).json({ success: false, message: "category is required" });
     }
 
+    const formatDynamic = (questions) =>
+      (questions || []).map((q) => ({
+        questionText: q.questionText,
+        options: q.options || [],
+        answer: q.answer,
+      }));
+
+    // Helper: Format predefined answers (from payload fields)
+    const formatPredefined = (sub) => ({
+      patientName: sub.answerPatientName || null,
+      ageOrDob: sub.answerAgeOrDob || null,
+      icdCodes: sub.answerIcdCodes ? parseCsv(sub.answerIcdCodes) : [],
+      cptCodes: sub.answerCptCodes ? parseCsv(sub.answerCptCodes) : [],
+      pcsCodes: sub.answerPcsCodes ? parseCsv(sub.answerPcsCodes) : [],
+      hcpcsCodes: sub.answerHcpcsCodes ? parseCsv(sub.answerHcpcsCodes) : [],
+      drgValue: sub.answerDrgValue || null,
+      modifiers: sub.answerModifiers ? parseCsv(sub.answerModifiers) : [],
+      notes: sub.answerNotes || null,
+    });
+
     let assignmentData = {
       moduleName,
-      category: category.trim(),
+      category: toUpperTrim(category), // normalize to uppercase for consistency
       // assignedStudents is deprecated; ignore any incoming values
     };
 
     if (subAssignments) {
       const parsed = JSON.parse(subAssignments);
-
-      // Helper: Format dynamic questions (MCQ or text)
-      const formatDynamic = (questions) =>
-        (questions || []).map((q) => ({
-          questionText: q.questionText,
-          options: q.options || [],
-          answer: q.answer
-        }));
-
-      // Helper: Format predefined answers
-      const formatPredefined = (sub) => ({
-        patientName: sub.answerPatientName || null,
-        ageOrDob: sub.answerAgeOrDob || null,
-        icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
-        cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
-        notes: sub.answerNotes || null
-      });
 
       // Single assignment → store at parent level
       if (parsed.length === 1) {
@@ -61,13 +127,13 @@ exports.addAssignment = async (req, res) => {
             return {
               subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
               dynamicQuestions: formatDynamic(sub.questions),
-              assignmentPdf: pdfPath
+              assignmentPdf: pdfPath,
             };
           } else {
             return {
               subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
               assignmentPdf: pdfPath,
-              answerKey: formatPredefined(sub)
+              answerKey: formatPredefined(sub),
             };
           }
         });
@@ -81,99 +147,58 @@ exports.addAssignment = async (req, res) => {
       success: true,
       message:
         "Assignment saved to category successfully (supports predefined, text, and MCQ dynamic questions)",
-      assignment
+      assignment,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
-
-
-
 // Get all assignments with merged question format
 exports.getAssignments = async (req, res) => {
-try {
-const assignments = await Assignment.find().populate("assignedStudents");
+  try {
+    const assignments = await Assignment.find().populate("assignedStudents");
 
-// Helper: format predefined questions          
-const formatPredefined = (answerKey) => {          
-  if (!answerKey) return [];          
-  const hasData =          
-    answerKey.patientName ||          
-    answerKey.ageOrDob ||          
-    (answerKey.icdCodes && answerKey.icdCodes.length) ||          
-    (answerKey.cptCodes && answerKey.cptCodes.length) ||          
-    answerKey.notes;          
-      
-  return hasData          
-    ? [{          
-        type: "predefined",          
-        answerKey          
-      }]          
-    : [];          
-};          
-      
-// Helper: format dynamic questions (with MCQ options + on-the-fly dynamicAnswerKey)          
-const formatDynamic = (dynamicQuestions) => {          
-  if (!dynamicQuestions || !dynamicQuestions.length) return [];          
-  return dynamicQuestions.map(q => ({          
-    type: "dynamic",          
-    questionText: q.questionText,          
-    options: q.options || [],          
-    answer: q.answer          
-  }));          
-};          
-      
-const formatted = assignments.map(a => ({          
-  _id: a._id,          
-  moduleName: a.moduleName,          
-  assignedStudents: a.assignedStudents,          
-  assignedDate: a.assignedDate,          
-  assignmentPdf: a.assignmentPdf || null,          
-      
-  // Merged questions (parent level)          
-  questions: [          
-    ...formatPredefined(a.answerKey),          
-    ...formatDynamic(a.dynamicQuestions)          
-  ],          
-      
-  // On-the-fly dynamicAnswerKey (parent level)          
-  dynamicAnswerKey: a.dynamicQuestions?.map(q => ({          
-    questionText: q.questionText,          
-    answer: q.answer          
-  })) || [],          
-      
-  // Sub-assignments          
-  subAssignments: a.subAssignments.map(sa => ({          
-    _id: sa._id,          
-    subModuleName: sa.subModuleName,          
-    assignmentPdf: sa.assignmentPdf || null,          
-      
-    questions: [          
-      ...formatPredefined(sa.answerKey),          
-      ...formatDynamic(sa.dynamicQuestions)          
-    ],          
-      
-    // On-the-fly dynamicAnswerKey (sub-assignment level)          
-    dynamicAnswerKey: sa.dynamicQuestions?.map(q => ({          
-      questionText: q.questionText,          
-      answer: q.answer          
-    })) || []          
-  }))          
-}));          
-      
-res.json(formatted);
+    const formatted = assignments.map((a) => ({
+      _id: a._id,
+      moduleName: a.moduleName,
+      assignedStudents: a.assignedStudents,
+      assignedDate: a.assignedDate,
+      assignmentPdf: a.assignmentPdf || null,
 
-} catch (err) {
-res.status(500).json({ error: err.message });
-}
+      // Merged questions (parent level)
+      questions: [...formatPredefinedOut(a.answerKey), ...formatDynamicOut(a.dynamicQuestions)],
+
+      // On-the-fly dynamicAnswerKey (parent level)
+      dynamicAnswerKey:
+        a.dynamicQuestions?.map((q) => ({
+          questionText: q.questionText,
+          answer: q.answer,
+        })) || [],
+
+      // Sub-assignments
+      subAssignments:
+        a.subAssignments?.map((sa) => ({
+          _id: sa._id,
+          subModuleName: sa.subModuleName,
+          assignmentPdf: sa.assignmentPdf || null,
+
+          questions: [...formatPredefinedOut(sa.answerKey), ...formatDynamicOut(sa.dynamicQuestions)],
+
+          // On-the-fly dynamicAnswerKey (sub-assignment level)
+          dynamicAnswerKey:
+            sa.dynamicQuestions?.map((q) => ({
+              questionText: q.questionText,
+              answer: q.answer,
+            })) || [],
+        })) || [],
+    }));
+
+    res.json(formatted);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
-
-
-
-
-
 
 // Delete entire module
 exports.deleteAssignmentById = async (req, res) => {
@@ -195,7 +220,7 @@ exports.deleteSubAssignment = async (req, res) => {
     if (!assignment) return res.status(404).json({ error: "Module not found" });
 
     assignment.subAssignments = assignment.subAssignments.filter(
-      sub => sub._id.toString() !== subId
+      (sub) => sub._id.toString() !== subId
     );
 
     await assignment.save();
@@ -204,8 +229,6 @@ exports.deleteSubAssignment = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
-
 
 exports.deleteAllAssignments = async (req, res) => {
   try {
@@ -216,7 +239,7 @@ exports.deleteAllAssignments = async (req, res) => {
     res.json({
       success: true,
       message: "All assignments deleted successfully",
-      deletedCount: result.deletedCount
+      deletedCount: result.deletedCount,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -227,7 +250,7 @@ exports.deleteAllAssignments = async (req, res) => {
 exports.updateAssignment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { moduleName, assignedStudents, subAssignments } = req.body;
+    const { moduleName, assignedStudents, subAssignments, category } = req.body;
     const files = req.files?.assignmentPdf || [];
 
     // Find the existing assignment
@@ -236,36 +259,43 @@ exports.updateAssignment = async (req, res) => {
       return res.status(404).json({ error: "Assignment not found" });
     }
 
+    const formatDynamic = (questions) =>
+      (questions || []).map((q) => ({
+        _id: q._id || new mongoose.Types.ObjectId(), // Preserve existing ID or create new one
+        questionText: q.questionText,
+        options: q.options || [],
+        answer: q.answer,
+      }));
+
+    const formatPredefined = (sub) => ({
+      patientName: sub.answerPatientName || null,
+      ageOrDob: sub.answerAgeOrDob || null,
+      icdCodes: sub.answerIcdCodes ? parseCsv(sub.answerIcdCodes) : [],
+      cptCodes: sub.answerCptCodes ? parseCsv(sub.answerCptCodes) : [],
+      pcsCodes: sub.answerPcsCodes ? parseCsv(sub.answerPcsCodes) : [],
+      hcpcsCodes: sub.answerHcpcsCodes ? parseCsv(sub.answerHcpcsCodes) : [],
+      drgValue: sub.answerDrgValue || null,
+      modifiers: sub.answerModifiers ? parseCsv(sub.answerModifiers) : [],
+      notes: sub.answerNotes || null,
+    });
+
     // Prepare update data
     let updateData = {
       moduleName,
-      assignedStudents: assignedStudents ? assignedStudents.split(",") : []
+      assignedStudents: assignedStudents ? assignedStudents.split(",") : [],
     };
+
+    if (category) {
+      updateData.category = toUpperTrim(category);
+    }
 
     if (subAssignments) {
       const parsed = JSON.parse(subAssignments);
 
-      // Helper: Format dynamic questions (MCQ or text)
-      const formatDynamic = (questions) => questions.map(q => ({
-        _id: q._id || new mongoose.Types.ObjectId(), // Preserve existing ID or create new one
-        questionText: q.questionText,
-        options: q.options || [],
-        answer: q.answer
-      }));
-
-      // Helper: Format predefined answers
-      const formatPredefined = (sub) => ({
-        patientName: sub.answerPatientName || null,
-        ageOrDob: sub.answerAgeOrDob || null,
-        icdCodes: sub.answerIcdCodes ? sub.answerIcdCodes.split(",") : [],
-        cptCodes: sub.answerCptCodes ? sub.answerCptCodes.split(",") : [],
-        notes: sub.answerNotes || null
-      });
-
       // Single assignment → store at parent level
       if (parsed.length === 1) {
         const single = parsed[0];
-        
+
         // Only update PDF if a new one is provided
         if (files[0]) {
           updateData.assignmentPdf = files[0].path || files[0].url || files[0].secure_url || null;
@@ -292,7 +322,7 @@ exports.updateAssignment = async (req, res) => {
               subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
               dynamicQuestions: formatDynamic(sub.questions),
               assignmentPdf: pdfPath || sub.assignmentPdf, // Keep existing PDF if no new one
-              answerKey: null // Clear predefined answers
+              answerKey: null, // Clear predefined answers
             };
           } else {
             return {
@@ -300,7 +330,7 @@ exports.updateAssignment = async (req, res) => {
               subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
               assignmentPdf: pdfPath || sub.assignmentPdf, // Keep existing PDF if no new one
               answerKey: formatPredefined(sub),
-              dynamicQuestions: [] // Clear dynamic questions
+              dynamicQuestions: [], // Clear dynamic questions
             };
           }
         });
@@ -308,16 +338,15 @@ exports.updateAssignment = async (req, res) => {
     }
 
     // Update the assignment
-    const updatedAssignment = await Assignment.findByIdAndUpdate(
-      id,
-      updateData,
-      { new: true, runValidators: true }
-    ).populate("assignedStudents");
+    const updatedAssignment = await Assignment.findByIdAndUpdate(id, updateData, {
+      new: true,
+      runValidators: true,
+    }).populate("assignedStudents");
 
     res.json({
       success: true,
       message: "Assignment updated successfully",
-      assignment: updatedAssignment
+      assignment: updatedAssignment,
     });
   } catch (err) {
     console.error("Update assignment error:", err);
@@ -325,11 +354,7 @@ exports.updateAssignment = async (req, res) => {
   }
 };
 
-
 // Get only parent assignments assigned to a specific student
-// Example update in getAssignmentsByStudentId
-
-
 exports.getAssignmentsByStudentId = async (req, res) => {
   try {
     const { studentId } = req.params;
@@ -340,38 +365,38 @@ exports.getAssignmentsByStudentId = async (req, res) => {
       {
         moduleName: 1,
         assignedDate: 1,
-        subAssignments: 1
+        subAssignments: 1,
       }
     ).lean();
 
     // 2. Get all submissions by this student
     const submissions = await Submission.find({ studentId }).lean();
 
-    const processedAssignments = assignments.map(ass => {
+    const processedAssignments = assignments.map((ass) => {
       // find this student's submission for the assignment
       const studentSubmission = submissions.find(
-        sub => sub.assignmentId.toString() === ass._id.toString()
+        (sub) => sub.assignmentId.toString() === ass._id.toString()
       );
 
-      const subStatuses = (ass.subAssignments || []).map(sub => {
+      const subStatuses = (ass.subAssignments || []).map((sub) => {
         const submittedSub = studentSubmission?.submittedAnswers?.find(
-          ans => ans.subAssignmentId?.toString() === sub._id.toString()
+          (ans) => ans.subAssignmentId?.toString() === sub._id.toString()
         );
         return {
           ...sub,
-          isCompleted: !!submittedSub
+          isCompleted: !!submittedSub,
         };
       });
 
       const parentCompleted =
         subStatuses.length > 0
-          ? subStatuses.every(sub => sub.isCompleted)
+          ? subStatuses.every((sub) => sub.isCompleted)
           : !!studentSubmission; // if no subAssignments, check if any parent-level submission exists
 
       return {
         ...ass,
         subAssignments: subStatuses,
-        isCompleted: parentCompleted
+        isCompleted: parentCompleted,
       };
     });
 
@@ -381,8 +406,6 @@ exports.getAssignmentsByStudentId = async (req, res) => {
   }
 };
 
-
-
 // Get full details of a parent assignment for a specific student
 exports.getAssignmentDetailsForStudent = async (req, res) => {
   try {
@@ -391,44 +414,15 @@ exports.getAssignmentDetailsForStudent = async (req, res) => {
     // Find the assignment where the student is assigned
     const assignment = await Assignment.findOne({
       _id: assignmentId,
-      assignedStudents: studentId
+      assignedStudents: studentId,
     }).populate("assignedStudents");
 
     if (!assignment) {
       return res.status(404).json({
         success: false,
-        message: "Assignment not found or not assigned to this student"
+        message: "Assignment not found or not assigned to this student",
       });
     }
-
-    // Helper: format predefined answers
-    const formatPredefined = (answerKey) => {
-      if (!answerKey) return [];
-      const hasData =
-        answerKey.patientName ||
-        answerKey.ageOrDob ||
-        (answerKey.icdCodes && answerKey.icdCodes.length) ||
-        (answerKey.cptCodes && answerKey.cptCodes.length) ||
-        answerKey.notes;
-
-      return hasData
-        ? [{
-            type: "predefined",
-            answerKey
-          }]
-        : [];
-    };
-
-    // Helper: format dynamic questions
-    const formatDynamic = (dynamicQuestions) => {
-      if (!dynamicQuestions || !dynamicQuestions.length) return [];
-      return dynamicQuestions.map(q => ({
-        type: "dynamic",
-        questionText: q.questionText,
-        options: q.options || [],
-        answer: q.answer
-      }));
-    };
 
     // Prepare the response
     const formattedAssignment = {
@@ -440,134 +434,102 @@ exports.getAssignmentDetailsForStudent = async (req, res) => {
 
       // Parent-level questions
       questions: [
-        ...formatPredefined(assignment.answerKey),
-        ...formatDynamic(assignment.dynamicQuestions)
+        ...formatPredefinedOut(assignment.answerKey),
+        ...formatDynamicOut(assignment.dynamicQuestions),
       ],
-      dynamicAnswerKey: assignment.dynamicQuestions?.map(q => ({
-        questionText: q.questionText,
-        answer: q.answer
-      })) || [],
+      dynamicAnswerKey:
+        assignment.dynamicQuestions?.map((q) => ({
+          questionText: q.questionText,
+          answer: q.answer,
+        })) || [],
 
       // Sub-assignments
-      subAssignments: assignment.subAssignments.map(sa => ({
+      subAssignments: assignment.subAssignments.map((sa) => ({
         _id: sa._id,
         subModuleName: sa.subModuleName,
         assignmentPdf: sa.assignmentPdf || null,
-        questions: [
-          ...formatPredefined(sa.answerKey),
-          ...formatDynamic(sa.dynamicQuestions)
-        ],
-        dynamicAnswerKey: sa.dynamicQuestions?.map(q => ({
-          questionText: q.questionText,
-          answer: q.answer
-        })) || []
-      }))
+        questions: [...formatPredefinedOut(sa.answerKey), ...formatDynamicOut(sa.dynamicQuestions)],
+        dynamicAnswerKey:
+          sa.dynamicQuestions?.map((q) => ({
+            questionText: q.questionText,
+            answer: q.answer,
+          })) || [],
+      })),
     };
 
     res.json({
       success: true,
-      assignment: formattedAssignment
+      assignment: formattedAssignment,
     });
-
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
-
-// Get all assignments by category
 // Get all assignments by category
 exports.getAssignmentsByCategory = async (req, res) => {
   try {
     const { category } = req.params;
     const { studentId } = req.query; // Get studentId from query params
 
-    if (!category) {  
-      return res.status(400).json({  
-        success: false,  
-        message: "Category parameter is required"  
-      });  
+    if (!category) {
+      return res.status(400).json({
+        success: false,
+        message: "Category parameter is required",
+      });
     }
 
     if (!studentId) {
       return res.status(400).json({
         success: false,
-        message: "Student ID is required to check completion status"
+        message: "Student ID is required to check completion status",
       });
     }
 
-    // Find all assignments for the given category  
-    const assignments = await Assignment.find({   
-      category: category.trim().toUpperCase()   
+    // Find all assignments for the given category
+    const formattedCategory = toUpperTrim(category);
+    const assignments = await Assignment.find({
+      category: formattedCategory,
     }).populate("assignedStudents");
 
-    if (!assignments || assignments.length === 0) {  
-      return res.status(404).json({  
-        success: false,  
-        message: `No assignments found for category: ${category}`  
-      });  
+    if (!assignments || assignments.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `No assignments found for category: ${category}`,
+      });
     }
 
     // Check submissions for this student
     const submissions = await Submission.find({
       studentId: studentId,
-      assignmentId: { $in: assignments.map(a => a._id) }
+      assignmentId: { $in: assignments.map((a) => a._id) },
     });
-
-    // Helper: format predefined answers  
-    const formatPredefined = (answerKey) => {  
-      if (!answerKey) return [];  
-      const hasData =  
-        answerKey.patientName ||  
-        answerKey.ageOrDob ||  
-        (answerKey.icdCodes && answerKey.icdCodes.length) ||  
-        (answerKey.cptCodes && answerKey.cptCodes.length) ||  
-        answerKey.notes;  
-
-      return hasData  
-        ? [{  
-            type: "predefined",  
-            answerKey  
-          }]  
-        : [];  
-    };
-
-    // Helper: format dynamic questions  
-    const formatDynamic = (dynamicQuestions) => {  
-      if (!dynamicQuestions || !dynamicQuestions.length) return [];  
-      return dynamicQuestions.map(q => ({  
-        type: "dynamic",  
-        questionText: q.questionText,  
-        options: q.options || [],  
-        answer: q.answer  
-      }));  
-    };
 
     // Helper: check if parent assignment is completed
     const isParentCompleted = (assignmentId) => {
-      const submission = submissions.find(sub => 
-        sub.assignmentId.toString() === assignmentId.toString()
+      const submission = submissions.find(
+        (sub) => sub.assignmentId.toString() === assignmentId.toString()
       );
       return !!submission;
     };
 
     // Helper: check if sub-assignment is completed
     const isSubAssignmentCompleted = (assignmentId, subAssignmentId) => {
-      const submission = submissions.find(sub => 
-        sub.assignmentId.toString() === assignmentId.toString()
+      const submission = submissions.find(
+        (sub) => sub.assignmentId.toString() === assignmentId.toString()
       );
-      
+
       if (!submission) return false;
-      
-      return submission.submittedAnswers.some(answer => 
-        answer.subAssignmentId.toString() === subAssignmentId.toString()
+
+      return submission.submittedAnswers.some(
+        (answer) => answer.subAssignmentId.toString() === subAssignmentId.toString()
       );
     };
 
-    // Format all assignments for response  
-    const formattedAssignments = assignments.map(assignment => {
+    // Format all assignments for response
+    const formattedAssignments = assignments.map((assignment) => {
       const parentCompleted = isParentCompleted(assignment._id);
-      
+
       return {
         _id: assignment._id,
         moduleName: assignment.moduleName,
@@ -577,50 +539,46 @@ exports.getAssignmentsByCategory = async (req, res) => {
         assignmentPdf: assignment.assignmentPdf || null,
         isCompleted: parentCompleted, // Parent completion status
 
-        // Parent-level questions  
-        questions: [  
-          ...formatPredefined(assignment.answerKey),  
-          ...formatDynamic(assignment.dynamicQuestions)  
+        // Parent-level questions
+        questions: [
+          ...formatPredefinedOut(assignment.answerKey),
+          ...formatDynamicOut(assignment.dynamicQuestions),
         ],
-        dynamicAnswerKey: assignment.dynamicQuestions?.map(q => ({  
-          questionText: q.questionText,  
-          answer: q.answer  
-        })) || [],  
+        dynamicAnswerKey:
+          assignment.dynamicQuestions?.map((q) => ({
+            questionText: q.questionText,
+            answer: q.answer,
+          })) || [],
 
-        // Sub-assignments  
-        subAssignments: assignment.subAssignments.map(sa => ({
+        // Sub-assignments
+        subAssignments: assignment.subAssignments.map((sa) => ({
           _id: sa._id,
           subModuleName: sa.subModuleName,
           assignmentPdf: sa.assignmentPdf || null,
           isCompleted: isSubAssignmentCompleted(assignment._id, sa._id), // Sub-assignment completion status
-          questions: [  
-            ...formatPredefined(sa.answerKey),  
-            ...formatDynamic(sa.dynamicQuestions)  
-          ],
-          dynamicAnswerKey: sa.dynamicQuestions?.map(q => ({  
-            questionText: q.questionText,  
-            answer: q.answer  
-          })) || []  
-        }))  
+          questions: [...formatPredefinedOut(sa.answerKey), ...formatDynamicOut(sa.dynamicQuestions)],
+          dynamicAnswerKey:
+            sa.dynamicQuestions?.map((q) => ({
+              questionText: q.questionText,
+              answer: q.answer,
+            })) || [],
+        })),
       };
     });
 
-    res.json({  
-      success: true,  
-      count: formattedAssignments.length,  
-      category: category.toUpperCase(),  
-      assignments: formattedAssignments  
+    res.json({
+      success: true,
+      count: formattedAssignments.length,
+      category: formattedCategory,
+      assignments: formattedAssignments,
     });
-
   } catch (err) {
     res.status(500).json({
       success: false,
-      error: err.message
+      error: err.message,
     });
   }
 };
-
-
 
 // Get total assignments count by category
 exports.getAssignmentsCountByCategory = async (req, res) => {
@@ -630,29 +588,26 @@ exports.getAssignmentsCountByCategory = async (req, res) => {
     if (!category) {
       return res.status(400).json({
         success: false,
-        message: "Category parameter is required"
+        message: "Category parameter is required",
       });
     }
 
-    // Count assignments for the given category
-    const count = await Assignment.countDocuments({ 
-      category: category.trim().toUpperCase() 
+    const count = await Assignment.countDocuments({
+      category: toUpperTrim(category),
     });
 
     res.json({
       success: true,
-      category: category.toUpperCase(),
-      totalAssignments: count
+      category: toUpperTrim(category),
+      totalAssignments: count,
     });
-
   } catch (err) {
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: err.message 
+      error: err.message,
     });
   }
 };
-
 
 // Get assignment statistics for a student by category
 exports.getAssignmentStatsByCategory = async (req, res) => {
@@ -662,7 +617,7 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
     if (!category || !studentId) {
       return res.status(400).json({
         success: false,
-        message: "Category and studentId parameters are required"
+        message: "Category and studentId parameters are required",
       });
     }
 
@@ -670,15 +625,15 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(studentId)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid studentId format"
+        message: "Invalid studentId format",
       });
     }
 
-    const formattedCategory = category.trim().toUpperCase();
+    const formattedCategory = toUpperTrim(category);
 
     // Get all assignments for the category
-    const assignments = await Assignment.find({ 
-      category: formattedCategory 
+    const assignments = await Assignment.find({
+      category: formattedCategory,
     });
 
     if (!assignments || assignments.length === 0) {
@@ -687,16 +642,16 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
         category: formattedCategory,
         totalAssigned: 0,
         completed: 0,
-        averageScore: 0,
+        averageScore: "0%",
         pending: 0,
-        message: "No assignments found for this category"
+        message: "No assignments found for this category",
       });
     }
 
     // Get all submissions for this student and category
     const submissions = await Submission.find({
       studentId: new mongoose.Types.ObjectId(studentId),
-      assignmentId: { $in: assignments.map(a => a._id) }
+      assignmentId: { $in: assignments.map((a) => a._id) },
     });
 
     // Calculate statistics
@@ -708,16 +663,17 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
     let totalScore = 0;
     let totalSubmissionsWithScore = 0;
 
-    submissions.forEach(submission => {
+    submissions.forEach((submission) => {
       if (submission.overallProgress !== undefined && submission.overallProgress !== null) {
         totalScore += submission.overallProgress;
         totalSubmissionsWithScore++;
       }
     });
 
-    const averageScore = totalSubmissionsWithScore > 0 
-      ? Math.round((totalScore / totalSubmissionsWithScore) * 100) / 100 
-      : 0;
+    const averageScore =
+      totalSubmissionsWithScore > 0
+        ? Math.round((totalScore / totalSubmissionsWithScore) * 100) / 100
+        : 0;
 
     res.json({
       success: true,
@@ -730,14 +686,13 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
         assigned: totalAssigned,
         completed: completed,
         averageScore: averageScore,
-        pending: pending
-      }
+        pending: pending,
+      },
     });
-
   } catch (err) {
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: err.message 
+      error: err.message,
     });
   }
 };
@@ -750,26 +705,26 @@ exports.getDetailedAssignmentStats = async (req, res) => {
     if (!category || !studentId) {
       return res.status(400).json({
         success: false,
-        message: "Category and studentId parameters are required"
+        message: "Category and studentId parameters are required",
       });
     }
 
-    const formattedCategory = category.trim().toUpperCase();
+    const formattedCategory = toUpperTrim(category);
 
     // Get all assignments for the category
-    const assignments = await Assignment.find({ 
-      category: formattedCategory 
+    const assignments = await Assignment.find({
+      category: formattedCategory,
     });
 
     // Get all submissions for this student and category
     const submissions = await Submission.find({
       studentId: new mongoose.Types.ObjectId(studentId),
-      assignmentId: { $in: assignments.map(a => a._id) }
-    }).populate('assignmentId');
+      assignmentId: { $in: assignments.map((a) => a._id) },
+    }).populate("assignmentId");
 
     // Create a map of assignmentId to submission for quick lookup
     const submissionMap = {};
-    submissions.forEach(sub => {
+    submissions.forEach((sub) => {
       submissionMap[sub.assignmentId._id.toString()] = sub;
     });
 
@@ -777,18 +732,18 @@ exports.getDetailedAssignmentStats = async (req, res) => {
     const completedAssignments = [];
     const pendingAssignments = [];
 
-    assignments.forEach(assignment => {
+    assignments.forEach((assignment) => {
       const submission = submissionMap[assignment._id.toString()];
       if (submission) {
         completedAssignments.push({
           assignment: assignment.moduleName,
           score: submission.overallProgress || 0,
-          submissionDate: submission.submissionDate
+          submissionDate: submission.submissionDate,
         });
       } else {
         pendingAssignments.push({
           assignment: assignment.moduleName,
-          assignedDate: assignment.assignedDate
+          assignedDate: assignment.assignedDate,
         });
       }
     });
@@ -799,7 +754,7 @@ exports.getDetailedAssignmentStats = async (req, res) => {
     const pending = pendingAssignments.length;
 
     // Calculate average score
-    const totalScore = completedAssignments.reduce((sum, assignment) => sum + assignment.score, 0);
+    const totalScore = completedAssignments.reduce((sum, a) => sum + a.score, 0);
     const averageScore = completed > 0 ? Math.round((totalScore / completed) * 100) / 100 : 0;
 
     res.json({
@@ -809,40 +764,20 @@ exports.getDetailedAssignmentStats = async (req, res) => {
         totalAssigned,
         completed,
         averageScore: `${averageScore}%`,
-        pending
+        pending,
       },
       completedAssignments,
-      pendingAssignments
+      pendingAssignments,
     });
-
   } catch (err) {
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: err.message 
+      error: err.message,
     });
   }
 };
 
-
-// Helpers
-function textMatchIgnoreCase(a, b) {
-  const strA = (a ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
-  const strB = (b ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
-  return strA === strB;
-}
-
-function arraysMatchIgnoreOrder(a = [], b = []) {
-  if (!Array.isArray(a) || !Array.isArray(b)) return false;
-  if (a.length !== b.length) return false;
-  const sortedA = a.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
-  const sortedB = b.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
-  return sortedA.every((val, idx) => val === sortedB[idx]);
-}
-
-
-
-
-
+/* ---------------------- Submissions — detailed compare -------------------- */
 
 exports.getAssignmentSubmissions = async (req, res) => {
   try {
@@ -859,6 +794,10 @@ exports.getAssignmentSubmissions = async (req, res) => {
       ageOrDob: "",
       icdCodes: [],
       cptCodes: [],
+      pcsCodes: [],
+      hcpcsCodes: [],
+      drgValue: "",
+      modifiers: [],
       notes: "",
       dynamicQuestions: [],
     };
@@ -879,6 +818,10 @@ exports.getAssignmentSubmissions = async (req, res) => {
           ageOrDob: parentAnswerKey.ageOrDob ?? "",
           icdCodes: parentAnswerKey.icdCodes ?? [],
           cptCodes: parentAnswerKey.cptCodes ?? [],
+          pcsCodes: parentAnswerKey.pcsCodes ?? [],
+          hcpcsCodes: parentAnswerKey.hcpcsCodes ?? [],
+          drgValue: parentAnswerKey.drgValue ?? "",
+          modifiers: parentAnswerKey.modifiers ?? [],
           notes: parentAnswerKey.notes ?? "",
           dynamicQuestions: (parentAnswerKey.dynamicQuestions ?? []).map((q) => ({
             questionText: q.questionText,
@@ -908,15 +851,17 @@ exports.getAssignmentSubmissions = async (req, res) => {
             ageOrDob: "",
             icdCodes: [],
             cptCodes: [],
+            pcsCodes: [],
+            hcpcsCodes: [],
+            drgValue: "",
+            modifiers: [],
             notes: "",
           };
 
           // Compare dynamic questions (index-based)
           const comparedDynamic = (sa.dynamicQuestions || []).map((dq, idx) => {
             const defQ = (defSub.dynamicQuestions || [])[idx];
-            const isCorrect = defQ
-              ? textMatchIgnoreCase(dq.submittedAnswer, defQ.answer)
-              : false;
+            const isCorrect = defQ ? textMatchIgnoreCase(dq.submittedAnswer, defQ.answer) : false;
             return {
               entered: {
                 questionText: defQ?.questionText || dq.questionText,
@@ -954,6 +899,18 @@ exports.getAssignmentSubmissions = async (req, res) => {
           if (arraysMatchIgnoreOrder(sa.cptCodes, defKey.cptCodes)) correctCount++;
           else wrongCount++;
 
+          if (arraysMatchIgnoreOrder(sa.pcsCodes, defKey.pcsCodes)) correctCount++;
+          else wrongCount++;
+
+          if (arraysMatchIgnoreOrder(sa.hcpcsCodes, defKey.hcpcsCodes)) correctCount++;
+          else wrongCount++;
+
+          if (textMatchIgnoreCase(sa.drgValue, defKey.drgValue)) correctCount++;
+          else wrongCount++;
+
+          if (arraysMatchIgnoreOrder(sa.modifiers, defKey.modifiers)) correctCount++;
+          else wrongCount++;
+
           if (textMatchIgnoreCase(sa.notes, defKey.notes)) correctCount++;
           else wrongCount++;
 
@@ -972,6 +929,10 @@ exports.getAssignmentSubmissions = async (req, res) => {
               ageOrDob: sa.ageOrDob ?? null,
               icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
               cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
+              pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
+              hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
+              drgValue: sa.drgValue ?? null,
+              modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
               notes: sa.notes ?? null,
               dynamicQuestions: comparedDynamic.map((d) => d.entered),
             },
@@ -980,10 +941,12 @@ exports.getAssignmentSubmissions = async (req, res) => {
               ageOrDob: defKey.ageOrDob ?? "",
               icdCodes: defKey.icdCodes ?? [],
               cptCodes: defKey.cptCodes ?? [],
+              pcsCodes: defKey.pcsCodes ?? [],
+              hcpcsCodes: defKey.hcpcsCodes ?? [],
+              drgValue: defKey.drgValue ?? "",
+              modifiers: defKey.modifiers ?? [],
               notes: defKey.notes ?? "",
-              dynamicQuestions: comparedDynamic
-                .map((d) => d.key)
-                .filter(Boolean),
+              dynamicQuestions: comparedDynamic.map((d) => d.key).filter(Boolean),
             },
             correctCount,
             wrongCount,
@@ -996,16 +959,13 @@ exports.getAssignmentSubmissions = async (req, res) => {
         }
 
         // ---------- CASE B: PARENT-LEVEL ONLY ----------
-        // No matching sub-assignment -> treat this as the parent-level submission.
         // Compare against parentAnswerKey and fill parentSummary.enteredValues
         const parentComparedDynamic = (sa.dynamicQuestions || []).map((dq, idx) => {
           // Prefer assignment-level explicit dynamicQuestions; else use answerKey's
           const defQ =
             (assignment.dynamicQuestions || [])[idx] ||
             (parentAnswerKey.dynamicQuestions || [])[idx];
-          const isCorrect = defQ
-            ? textMatchIgnoreCase(dq.submittedAnswer, defQ.answer)
-            : false;
+          const isCorrect = defQ ? textMatchIgnoreCase(dq.submittedAnswer, defQ.answer) : false;
           return {
             entered: {
               questionText: defQ?.questionText || dq.questionText,
@@ -1035,21 +995,35 @@ exports.getAssignmentSubmissions = async (req, res) => {
         if (arraysMatchIgnoreOrder(sa.cptCodes, parentAnswerKey.cptCodes)) pCorrect++;
         else pWrong++;
 
+        if (arraysMatchIgnoreOrder(sa.pcsCodes, parentAnswerKey.pcsCodes)) pCorrect++;
+        else pWrong++;
+
+        if (arraysMatchIgnoreOrder(sa.hcpcsCodes, parentAnswerKey.hcpcsCodes)) pCorrect++;
+        else pWrong++;
+
+        if (textMatchIgnoreCase(sa.drgValue, parentAnswerKey.drgValue)) pCorrect++;
+        else pWrong++;
+
+        if (arraysMatchIgnoreOrder(sa.modifiers, parentAnswerKey.modifiers)) pCorrect++;
+        else pWrong++;
+
         if (textMatchIgnoreCase(sa.notes, parentAnswerKey.notes)) pCorrect++;
         else pWrong++;
 
         parentComparedDynamic.forEach((d) => (d.isCorrect ? pCorrect++ : pWrong++));
 
         const pProgress =
-          pCorrect + pWrong > 0
-            ? Math.round((pCorrect / (pCorrect + pWrong)) * 100)
-            : 0;
+          pCorrect + pWrong > 0 ? Math.round((pCorrect / (pCorrect + pWrong)) * 100) : 0;
 
         parentSummary.enteredValues = {
           patientName: sa.patientName ?? null,
           ageOrDob: sa.ageOrDob ?? null,
           icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
           cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
+          pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
+          hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
+          drgValue: sa.drgValue ?? null,
+          modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
           notes: sa.notes ?? null,
           dynamicQuestions: parentComparedDynamic.map((d) => d.entered),
         };
@@ -1069,17 +1043,17 @@ exports.getAssignmentSubmissions = async (req, res) => {
           : 0;
 
       return {
-  studentId: sub.studentId?._id || null,
-  studentName: sub.studentId?.name || null,
-  courseName: sub.studentId?.courseName || null,
-  assignmentId: sub.assignmentId,
-  totalCorrect,
-  totalWrong,
-  overallProgress,
-  parentSummary,
-  subModulesSummary,
-submissionDate: sub.submissionDate || null,
-};
+        studentId: sub.studentId?._id || null,
+        studentName: sub.studentId?.name || null,
+        courseName: sub.studentId?.courseName || null,
+        assignmentId: sub.assignmentId,
+        totalCorrect,
+        totalWrong,
+        overallProgress,
+        parentSummary,
+        subModulesSummary,
+        submissionDate: sub.submissionDate || null,
+      };
     });
 
     res.json({
