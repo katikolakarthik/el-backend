@@ -1078,6 +1078,7 @@ exports.getAssignmentSubmissions = async (req, res) => {
   overallProgress,
   parentSummary,
   subModulesSummary,
+submissionDate: sub.submissionDate || null,
 };
     });
 
