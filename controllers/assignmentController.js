@@ -296,16 +296,10 @@ exports.updateAssignment = async (req, res) => {
       if (parsed.length === 1) {
         const single = parsed[0];
 
-        // Check for new PDF file first
-        const pdfPath = files[0]
-          ? files[0].path || files[0].url || files[0].secure_url || null
-          : null;
-        
-        // Check for existing PDF URL from form data
-        const existingPdfUrl = req.body[`existingPdf_0`] || null;
-        
-        // Use new PDF if provided, otherwise keep existing PDF URL
-        updateData.assignmentPdf = pdfPath || existingPdfUrl;
+        // Only update PDF if a new one is provided
+        if (files[0]) {
+          updateData.assignmentPdf = files[0].path || files[0].url || files[0].secure_url || null;
+        }
 
         if (single.isDynamic) {
           updateData.dynamicQuestions = formatDynamic(single.questions);
@@ -318,30 +312,23 @@ exports.updateAssignment = async (req, res) => {
       // Multiple sub-assignments
       else {
         updateData.subAssignments = parsed.map((sub, index) => {
-          // Check for new PDF file first
           const pdfPath = files[index]
             ? files[index].path || files[index].url || files[index].secure_url || null
             : null;
-          
-          // Check for existing PDF URL from form data
-          const existingPdfUrl = req.body[`existingPdf_${index}`] || null;
-          
-          // Use new PDF if provided, otherwise keep existing PDF URL
-          const finalPdfPath = pdfPath || existingPdfUrl;
 
           if (sub.isDynamic) {
             return {
               _id: sub._id || new mongoose.Types.ObjectId(), // Preserve existing ID or create new one
               subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
               dynamicQuestions: formatDynamic(sub.questions),
-              assignmentPdf: finalPdfPath, // Use final PDF path
+              assignmentPdf: pdfPath || sub.assignmentPdf, // Keep existing PDF if no new one
               answerKey: null, // Clear predefined answers
             };
           } else {
             return {
               _id: sub._id || new mongoose.Types.ObjectId(), // Preserve existing ID or create new one
               subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
-              assignmentPdf: finalPdfPath, // Use final PDF path
+              assignmentPdf: pdfPath || sub.assignmentPdf, // Keep existing PDF if no new one
               answerKey: formatPredefined(sub),
               dynamicQuestions: [], // Clear dynamic questions
             };
