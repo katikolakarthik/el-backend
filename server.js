@@ -192,7 +192,7 @@ app.get(
 
 
 // POST /api/category-summary
-router.post("/category-summary", studentController.getCategorySummary);
+app.post("/category-summary", studentController.getCategorySummary);
 
 
 
