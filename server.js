@@ -7,6 +7,7 @@ const { upload } = require("./config/cloudinary");
 const studentController = require("./controllers/studentController");
 const assignmentController = require("./controllers/assignmentController");
 const submissionController = require("./controllers/submissionController");
+const { validateSession, requireRole } = require("./middleware/authMiddleware");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -15,9 +16,8 @@ app.use(
   cors({
     origin: function (origin, callback) {
       const allowedOrigins = [
-        "https://el-front-umber.vercel.app",
-        "https://el-front.vercel.app",
-        "http://localhost:5173"
+        "http://localhost:5173",
+        "http://localhost:3000"
       ];
       if (!origin || allowedOrigins.indexOf(origin) !== -1) {
         callback(null, true);
@@ -96,8 +96,10 @@ app.post("/student/submit-assignment", submissionController.submitAssignment);
 
 
 
-// With
+// Login and session management
 app.post("/login", studentController.login);
+app.post("/logout", studentController.logout);
+app.get("/validate-session", studentController.validateSession);
 
 // Add admin creation route (make sure it's protected or used carefully)
 app.post("/admin/create", studentController.addAdmin);

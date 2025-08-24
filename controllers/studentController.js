@@ -229,7 +229,14 @@ exports.login = async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid password" });
     }
 
-    // Return user data with role
+    // Create session
+    const sessionController = require("../controllers/sessionController");
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+    const ipAddress = req.ip || req.connection.remoteAddress || 'Unknown';
+    
+    const sessionId = await sessionController.createSession(user._id, userAgent, ipAddress);
+
+    // Return user data with role and session
     res.json({
       success: true,
       message: "Login successful",
@@ -240,10 +247,96 @@ exports.login = async (req, res) => {
         courseName: user.courseName,
         profileImage: user.profileImage,
         enrolledDate: user.enrolledDate,
-      }
+      },
+      sessionId: sessionId
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// ==================== Logout ====================
+exports.logout = async (req, res) => {
+  try {
+    const sessionId = req.headers['x-session-id'];
+    
+    if (!sessionId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Session ID required" 
+      });
+    }
+
+    const sessionController = require("../controllers/sessionController");
+    const success = await sessionController.invalidateSession(sessionId);
+    
+    if (success) {
+      res.json({ 
+        success: true, 
+        message: "Logout successful" 
+      });
+    } else {
+      res.status(404).json({ 
+        success: false, 
+        message: "Session not found" 
+      });
+    }
+  } catch (err) {
+    res.status(500).json({ 
+      success: false, 
+      error: err.message 
+    });
+  }
+};
+
+// ==================== Validate Session ====================
+exports.validateSession = async (req, res) => {
+  try {
+    const sessionId = req.headers['x-session-id'];
+    
+    if (!sessionId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Session ID required" 
+      });
+    }
+
+    const sessionController = require("../controllers/sessionController");
+    const session = await sessionController.validateSession(sessionId);
+    
+    if (!session) {
+      return res.status(401).json({ 
+        success: false, 
+        message: "Invalid or expired session" 
+      });
+    }
+
+    // Get user details
+    const user = await Student.findById(session.userId);
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "User not found" 
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Session valid",
+      user: {
+        id: user._id,
+        name: user.name,
+        role: user.role,
+        courseName: user.courseName,
+        profileImage: user.profileImage,
+        enrolledDate: user.enrolledDate,
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ 
+      success: false, 
+      error: err.message 
+    });
   }
 };
 
