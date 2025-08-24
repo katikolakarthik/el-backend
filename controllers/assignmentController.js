@@ -296,9 +296,11 @@ exports.updateAssignment = async (req, res) => {
       if (parsed.length === 1) {
         const single = parsed[0];
 
-        // Only update PDF if a new one is provided
+        // Only update PDF if a new one is provided, otherwise keep existing
         if (files[0]) {
           updateData.assignmentPdf = files[0].path || files[0].url || files[0].secure_url || null;
+        } else {
+          updateData.assignmentPdf = existingAssignment.assignmentPdf; // Preserve existing PDF
         }
 
         if (single.isDynamic) {
@@ -312,9 +314,14 @@ exports.updateAssignment = async (req, res) => {
       // Multiple sub-assignments
       else {
         updateData.subAssignments = parsed.map((sub, index) => {
+          // Find existing sub-assignment to preserve PDF if no new one is provided
+          const existingSub = existingAssignment.subAssignments?.find(existing => 
+            existing._id.toString() === sub._id?.toString()
+          );
+          
           const pdfPath = files[index]
             ? files[index].path || files[index].url || files[index].secure_url || null
-            : null;
+            : (existingSub?.assignmentPdf || null); // Keep existing PDF if no new one
 
           if (sub.isDynamic) {
             return {
