@@ -1013,3 +1013,60 @@ exports.getStudentPaymentDetails = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+
+
+
+exports.getCategorySummary = async (req, res) => {
+  try {
+    const { category } = req.body;
+    if (!category) {
+      return res.status(400).json({ success: false, message: "category is required in the request body" });
+    }
+
+    // If you want only active students, uncomment the "activeOnly" block and add it to the query
+    // const activeOnly = true;
+    const now = new Date();
+
+    // Build student filter: courseName === category and exclude subadmins
+    const studentFilter = {
+      courseName: category,
+      role: { $ne: "subadmin" },
+      // ...(activeOnly ? { expiryDate: { $gte: now } } : {})
+    };
+
+    const [ totalAssignments, assignments, totalStudents, students ] = await Promise.all([
+      Assignment.countDocuments({ category }),
+      Assignment.find({ category })
+        .sort({ assignedDate: -1 })   // newest first
+        .lean(),
+      Student.countDocuments(studentFilter),
+      Student.find(studentFilter)
+        .select("name courseName enrolledDate expiryDate") // include what you need
+        .sort({ enrolledDate: -1 })
+        .lean()
+    ]);
+
+    // Optional: add a quick subAssignments count per assignment (handy for dashboards)
+    const assignmentsWithCounts = assignments.map(a => ({
+      ...a,
+      subAssignmentsCount: Array.isArray(a.subAssignments) ? a.subAssignments.length : 0
+    }));
+
+    return res.json({
+      success: true,
+      category,
+      totals: {
+        assignments: totalAssignments,
+        students: totalStudents
+      },
+      assignments: assignmentsWithCounts, // full docs + subAssignmentsCount
+      students // name, course, enrolledDate, expiryDate
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
