@@ -67,8 +67,8 @@ app.post(
 // Get All Assignments (Hierarchy)
 app.get("/admin/assignments", assignmentController.getAssignments);
 
-// Get single assignment for editing (must come before :id routes)
-app.get("/admin/assignments/:id/edit", assignmentController.getAssignmentForEdit);
+// Get single assignment by ID for editing
+app.get("/admin/assignments/edit/:id", assignmentController.getAssignmentById);
 
 // Delete whole module by ID
 app.delete("/admin/assignments/:id", assignmentController.deleteAssignmentById);

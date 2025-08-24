@@ -200,8 +200,8 @@ exports.getAssignments = async (req, res) => {
   }
 };
 
-// Get single assignment with full details for editing
-exports.getAssignmentForEdit = async (req, res) => {
+// Get single assignment by ID for editing
+exports.getAssignmentById = async (req, res) => {
   try {
     const { id } = req.params;
     const assignment = await Assignment.findById(id).populate("assignedStudents");
@@ -210,8 +210,30 @@ exports.getAssignmentForEdit = async (req, res) => {
       return res.status(404).json({ error: "Assignment not found" });
     }
 
-    // Return raw data structure for editing
-    res.json(assignment);
+    // Format the assignment for editing (similar to getAssignments but single item)
+    const formatted = {
+      _id: assignment._id,
+      moduleName: assignment.moduleName,
+      category: assignment.category,
+      assignedStudents: assignment.assignedStudents,
+      assignedDate: assignment.assignedDate,
+      assignmentPdf: assignment.assignmentPdf || null,
+
+      // Parent level data
+      answerKey: assignment.answerKey || null,
+      dynamicQuestions: assignment.dynamicQuestions || [],
+
+      // Sub-assignments
+      subAssignments: assignment.subAssignments?.map((sa) => ({
+        _id: sa._id,
+        subModuleName: sa.subModuleName,
+        assignmentPdf: sa.assignmentPdf || null,
+        answerKey: sa.answerKey || null,
+        dynamicQuestions: sa.dynamicQuestions || [],
+      })) || [],
+    };
+
+    res.json(formatted);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -313,11 +335,9 @@ exports.updateAssignment = async (req, res) => {
       if (parsed.length === 1) {
         const single = parsed[0];
 
-        // Only update PDF if a new one is provided, otherwise keep existing
+        // Only update PDF if a new one is provided
         if (files[0]) {
           updateData.assignmentPdf = files[0].path || files[0].url || files[0].secure_url || null;
-        } else {
-          updateData.assignmentPdf = existingAssignment.assignmentPdf; // Preserve existing PDF
         }
 
         if (single.isDynamic) {
@@ -331,14 +351,9 @@ exports.updateAssignment = async (req, res) => {
       // Multiple sub-assignments
       else {
         updateData.subAssignments = parsed.map((sub, index) => {
-          // Find existing sub-assignment to preserve PDF if no new one is provided
-          const existingSub = existingAssignment.subAssignments?.find(existing => 
-            existing._id.toString() === sub._id?.toString()
-          );
-          
           const pdfPath = files[index]
             ? files[index].path || files[index].url || files[index].secure_url || null
-            : (existingSub?.assignmentPdf || null); // Keep existing PDF if no new one
+            : null;
 
           if (sub.isDynamic) {
             return {
