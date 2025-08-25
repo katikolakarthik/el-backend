@@ -651,6 +651,7 @@ exports.getAssignmentsCountByCategory = async (req, res) => {
 
 
 // Get assignment statistics for a student by category
+// Get assignment statistics for a student by category
 exports.getAssignmentStatsByCategory = async (req, res) => {
   try {
     const { category, studentId } = req.params;
@@ -664,7 +665,6 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
 
     const formattedCategory = toUpperTrim(category);
 
-    // Pull parents
     const assignments = await Assignment.find({ category: formattedCategory }).lean();
     if (!assignments.length) {
       return res.json({
@@ -677,28 +677,24 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
 
     const totalAssigned = assignments.length;
 
-    // Map parent -> subCount
+    // parentId -> subCount
     const subCountsByAssignment = new Map(
       assignments.map(a => [String(a._id), (a.subAssignments?.length || 0)])
     );
 
-    // All submissions by this student for these parents
     const submissions = await Submission.find({
       studentId: new mongoose.Types.ObjectId(studentId),
       assignmentId: { $in: assignments.map(a => a._id) },
     }).lean();
 
-    // ---- SETTINGS ----
-    const REQUIRE_100_EACH_SUB = true;      // if true, each sub must be 100% to mark parent complete
-    const NO_SUB_MIN_PROGRESS = 0;          // for parents with no subs, treat as completed if overallProgress >= this
-                                            // (use 0 to count as soon as submitted; set to 100 if you want perfect score)
-    // ------------------
+    // ---- SETTINGS (CHANGED) ----
+    const REQUIRE_100_EACH_SUB = false;      // was true; this was causing your “only 1 completed”
+    const NO_SUB_MIN_PROGRESS   = 0;         // no-sub parent counts as soon as there’s a submission
+    const USE_OVERALL_FOR_MULTI_SUB = true;  // if overallProgress exists, allow it to mark completion
+    const MULTI_SUB_MIN_OVERALL = 0;         // threshold for overallProgress to count as complete
+    // ----------------------------
 
-    // Decide completion per assignment (dedup by assignmentId)
-    const completionByAssignment = new Map(); // assignmentId -> boolean complete
-    const scoreByAssignment = new Map();      // assignmentId -> best/last score for averaging
-
-    // If multiple submissions exist for same parent, prefer the latest by submissionDate
+    // Dedup by assignmentId (keep latest)
     const latestSubmissionByAssignment = new Map();
     for (const s of submissions) {
       const key = String(s.assignmentId);
@@ -708,41 +704,53 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
       }
     }
 
+    const completionByAssignment = new Map();
+    const scoreByAssignment = new Map();
+
     for (const [aId, subm] of latestSubmissionByAssignment) {
       const subCount = subCountsByAssignment.get(aId) || 0;
       let complete = false;
 
-      if (subCount > 0) {
-        // Must cover all unique subAssignmentIds
+      if (subCount === 0) {
+        // No subs: any submission (or >= threshold) counts
+        const prog = Number(subm.overallProgress ?? 0);
+        complete = prog >= NO_SUB_MIN_PROGRESS; // (CHANGED)
+      } else {
+        // With subs:
+        const answers = Array.isArray(subm.submittedAnswers) ? subm.submittedAnswers : [];
         const uniqueCovered = new Set(
-          (subm.submittedAnswers || [])
-            .map(sa => String(sa.subAssignmentId))
-            .filter(Boolean)
+          answers.map(sa => sa?.subAssignmentId ? String(sa.subAssignmentId) : null).filter(Boolean)
         );
-        if (uniqueCovered.size === subCount) {
+        const coversAllByIds   = uniqueCovered.size >= subCount;     // (CHANGED) allow >= in case of dup
+        const coversAllByCount = answers.length   >= subCount;       // (CHANGED) fallback when ids missing
+
+        if (coversAllByIds || coversAllByCount) {
           if (REQUIRE_100_EACH_SUB) {
-            complete = (subm.submittedAnswers || []).every(sa => Number(sa?.progressPercent) === 100);
+            complete = answers.every(sa => Number(sa?.progressPercent) === 100);
           } else {
-            complete = true;
+            complete = true; // (CHANGED) mark as completed once all subs answered (any score)
+          }
+        } else if (USE_OVERALL_FOR_MULTI_SUB) {
+          const overall = Number(subm.overallProgress ?? 0);
+          if (Number.isFinite(overall) && overall >= MULTI_SUB_MIN_OVERALL) {
+            complete = true; // (CHANGED) rescue path when subAssignmentId isn’t stored
           }
         }
-      } else {
-        // No subs: treat as completed if there is a submission and progress >= threshold
-        const prog = Number(subm.overallProgress ?? 0);
-        complete = (prog >= NO_SUB_MIN_PROGRESS);
       }
 
       completionByAssignment.set(aId, complete);
 
-      // Keep a score for averaging (use latest submission’s overallProgress)
       const prog = Number(subm.overallProgress);
       if (Number.isFinite(prog)) scoreByAssignment.set(aId, prog);
     }
 
+    // Count how many parents have ANY submission (useful for debugging your case)
+    const submittedParents = latestSubmissionByAssignment.size; // (NEW)
+
     const completed = Array.from(completionByAssignment.values()).filter(Boolean).length;
     const pending = totalAssigned - completed;
 
-    // Average only over completed parents (common for “averageScore” on the dashboard)
+    // Average over completed parents (change if you prefer all submissions)
     const completedScores = Array.from(scoreByAssignment.entries())
       .filter(([aId]) => completionByAssignment.get(aId))
       .map(([, v]) => v);
@@ -761,14 +769,13 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
       averageScore: `${averageScore}%`,
       pending,
       stats: { assigned: totalAssigned, completed, averageScore, pending },
+      debug: { submittedParents } // (optional) remove once verified
     });
 
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 };
-
-
 
 
 
