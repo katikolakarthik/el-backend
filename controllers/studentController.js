@@ -1092,7 +1092,7 @@ exports.getCategorySummary = async (req, res) => {
 
 // GET /stats/student/:id
 // GET /stats/student/:id
-exports.getStudentAssignmentFullStats = async (req, res) => {
+exports.getStudentAssignmentStats = async (req, res) => {
   try {
     const studentId = new mongoose.Types.ObjectId(req.params.id);
 
