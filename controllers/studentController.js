@@ -1090,8 +1090,11 @@ exports.getCategorySummary = async (req, res) => {
 
 
 
-// GET /stats/student/:id
-// GET /stats/student/:id
+
+
+
+
+// GET /stats/student/:id/full
 exports.getStudentAssignmentStats = async (req, res) => {
   try {
     const studentId = new mongoose.Types.ObjectId(req.params.id);
@@ -1101,42 +1104,113 @@ exports.getStudentAssignmentStats = async (req, res) => {
       return res.status(404).json({ success: false, message: "Student not found" });
     }
 
-    // 1. All assignments in his course
+    // 1) All assignments for this student's course/category (need sub IDs + names)
     const assignments = await Assignment.find(
       { category: student.courseName },
-      { moduleName: 1, category: 1, assignedDate: 1 }
+      { moduleName: 1, category: 1, assignedDate: 1, subAssignments: { _id: 1, subModuleName: 1 } }
     ).lean();
 
-    // 2. All submissions by this student
-    const submissions = await Submission.find(
+    // Index assignments and sub-assignments for quick lookups
+    const assignmentById = new Map();
+    const requiredSubIdsByAssignment = new Map();      // assignmentId -> [subIds]
+    const subNameById = new Map();                     // subId -> subModuleName
+
+    for (const a of assignments) {
+      assignmentById.set(String(a._id), a);
+      const subIds = (a.subAssignments || []).map(sa => {
+        subNameById.set(String(sa._id), sa.subModuleName || "");
+        return String(sa._id);
+      });
+      requiredSubIdsByAssignment.set(String(a._id), subIds);
+    }
+
+    // 2) All submissions for this student (we'll collapse to latest per assignment)
+    const rawSubs = await Submission.find(
       { studentId },
-      { assignmentId: 1, totalCorrect: 1, totalWrong: 1, overallProgress: 1, submittedAnswers: 1, submissionDate: 1 }
-    ).populate("assignmentId", "moduleName category assignedDate")
-    .lean();
+      {
+        assignmentId: 1,
+        submittedAnswers: 1,
+        totalCorrect: 1,
+        totalWrong: 1,
+        overallProgress: 1,
+        submissionDate: 1
+      }
+    ).sort({ submissionDate: -1 }).lean();
 
-    // 3. Submitted assignment IDs
-    const submittedIds = submissions.map(s => String(s.assignmentId?._id));
+    // Keep only latest submission per assignment
+    const latestByAssignment = new Map(); // assignmentId -> submission
+    for (const s of rawSubs) {
+      const aid = String(s.assignmentId);
+      if (!latestByAssignment.has(aid)) {
+        latestByAssignment.set(aid, s);
+      }
+    }
 
-    // 4. Pending assignments = total - submitted
-    const pendingAssignments = assignments.filter(a => !submittedIds.includes(String(a._id)));
+    // 3) Partition into fully-submitted vs pending (partial or no submission)
+    const submittedAssignments = [];
+    const pendingAssignments = [];
 
-    // 5. Format submitted with details
-    const submittedAssignments = submissions.map(s => ({
-      assignmentId: s.assignmentId?._id,
-      moduleName: s.assignmentId?.moduleName,
-      category: s.assignmentId?.category,
-      submissionDate: s.submissionDate,
-      totalCorrect: s.totalCorrect,
-      totalWrong: s.totalWrong,
-      overallProgress: s.overallProgress,
-      // breakdown of each sub-assignment
-      subAssignments: s.submittedAnswers.map(sub => ({
-        subAssignmentId: sub.subAssignmentId,
-        correctCount: sub.correctCount,
-        wrongCount: sub.wrongCount,
-        progressPercent: sub.progressPercent
-      }))
-    }));
+    for (const a of assignments) {
+      const aid = String(a._id);
+      const requiredSubIds = requiredSubIdsByAssignment.get(aid) || [];
+
+      const subDoc = latestByAssignment.get(aid);
+
+      if (!subDoc) {
+        // No submission at all -> pending
+        pendingAssignments.push({
+          _id: a._id,
+          moduleName: a.moduleName,
+          category: a.category,
+          assignedDate: a.assignedDate
+        });
+        continue;
+      }
+
+      // Collect submitted sub IDs from this submission
+      const submittedSubIds = (subDoc.submittedAnswers || [])
+        .map(sa => (sa?.subAssignmentId ? String(sa.subAssignmentId) : null))
+        .filter(Boolean);
+
+      // Fully submitted ONLY if every required subId exists in submittedSubIds
+      const isFullySubmitted =
+        requiredSubIds.length === 0
+          ? true // if no sub-assignments defined, treat as single-part
+          : requiredSubIds.every(reqId => submittedSubIds.includes(reqId));
+
+      if (!isFullySubmitted) {
+        // Partial → pending
+        pendingAssignments.push({
+          _id: a._id,
+          moduleName: a.moduleName,
+          category: a.category,
+          assignedDate: a.assignedDate
+        });
+        continue;
+      }
+
+      // Build sub details with names + scores
+      const subDetails = (subDoc.submittedAnswers || [])
+        .filter(sa => sa?.subAssignmentId) // only mapped ones
+        .map(sa => ({
+          subAssignmentId: sa.subAssignmentId,
+          subModuleName: subNameById.get(String(sa.subAssignmentId)) || "",
+          correctCount: sa.correctCount ?? 0,
+          wrongCount: sa.wrongCount ?? 0,
+          progressPercent: sa.progressPercent ?? 0
+        }));
+
+      submittedAssignments.push({
+        assignmentId: a._id,
+        moduleName: a.moduleName,
+        category: a.category,
+        submissionDate: subDoc.submissionDate,
+        totalCorrect: subDoc.totalCorrect ?? 0,
+        totalWrong: subDoc.totalWrong ?? 0,
+        overallProgress: subDoc.overallProgress ?? 0,
+        subAssignments: subDetails
+      });
+    }
 
     res.json({
       success: true,
@@ -1153,7 +1227,6 @@ exports.getStudentAssignmentStats = async (req, res) => {
         pendingAssignments
       }
     });
-
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
