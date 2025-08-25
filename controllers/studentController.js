@@ -352,25 +352,48 @@ exports.updateStudent = async (req, res) => {
       return res.status(404).json({ success: false, message: "Student not found" });
     }
 
-    // Use existing values if not provided in request body
+    // Base updates (use existing values if not provided)
     const updatedData = {
-      name: req.body.name || existingStudent.name,
-      password: req.body.password || existingStudent.password,
-      courseName: req.body.courseName || existingStudent.courseName,
+      name: req.body.name ?? existingStudent.name,
+      password: req.body.password ?? existingStudent.password,
+      courseName: req.body.courseName ?? existingStudent.courseName,
       paidAmount: req.body.paidAmount !== undefined ? req.body.paidAmount : existingStudent.paidAmount,
       remainingAmount: req.body.remainingAmount !== undefined ? req.body.remainingAmount : existingStudent.remainingAmount,
-      enrolledDate: req.body.enrolledDate || existingStudent.enrolledDate,
-      profileImage: req.file ? req.file.path : existingStudent.profileImage
+      enrolledDate: req.body.enrolledDate ?? existingStudent.enrolledDate,
+      profileImage: req.file ? req.file.path : existingStudent.profileImage,
     };
 
-    const updatedStudent = await Student.findByIdAndUpdate(id, updatedData, { new: true });
+    // Build update object so we can $unset when needed
+    const update = { $set: updatedData };
+
+    // expiryDate handling (same as addStudent)
+    if ("expiryDate" in req.body) {
+      const incoming = req.body.expiryDate;
+
+      if (incoming === null || incoming === "") {
+        // Clear expiry if explicitly sent as null/empty
+        update.$unset = { ...(update.$unset || {}), expiryDate: "", expiresAt: "" };
+      } else {
+        // Set/Update both fields
+        update.$set.expiryDate = incoming;          // Admin-provided expiry date
+        update.$set.expiresAt = incoming;           // TTL field mirrors expiry date
+      }
+    } else {
+      // Not provided => keep existing values
+      update.$set.expiryDate = existingStudent.expiryDate;
+      update.$set.expiresAt = existingStudent.expiresAt;
+    }
+
+    const updatedStudent = await Student.findByIdAndUpdate(id, update, {
+      new: true,
+      runValidators: true,
+    });
 
     res.json({ success: true, message: "Student updated successfully", student: updatedStudent });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
-
 
 
 // Get all students with summary info + progress
