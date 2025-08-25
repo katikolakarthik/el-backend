@@ -1088,3 +1088,81 @@ exports.getCategorySummary = async (req, res) => {
   }
 };
 
+
+
+// GET /stats/student/:id
+exports.getStudentAssignmentStats = async (req, res) => {
+  try {
+    const studentId = new mongoose.Types.ObjectId(req.params.id);
+
+    const [result] = await Student.aggregate([
+      { $match: { _id: studentId } },
+      {
+        $lookup: {
+          from: "assignments",
+          localField: "courseName",
+          foreignField: "category",
+          as: "assignments"
+        }
+      },
+      {
+        $lookup: {
+          from: "submissions",
+          let: { sid: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$studentId", "$$sid"] } } },
+            { $group: { _id: "$assignmentId" } } // unique submitted assignment ids
+          ],
+          as: "submittedAssignments"
+        }
+      },
+      {
+        $addFields: {
+          totalAssignments: { $size: "$assignments" },
+          submittedCount: { $size: "$submittedAssignments" }
+        }
+      },
+      {
+        $addFields: {
+          pendingCount: {
+            $max: [{ $subtract: ["$totalAssignments", "$submittedCount"] }, 0]
+          },
+          // compute pending assignment ids = all - submitted
+          pendingAssignmentIds: {
+            $setDifference: [
+              { $map: { input: "$assignments", as: "a", in: "$$a._id" } },
+              { $map: { input: "$submittedAssignments", as: "s", in: "$$s._id" } }
+            ]
+          }
+        }
+      },
+      {
+        $project: {
+          name: 1,
+          courseName: 1,
+          totalAssignments: 1,
+          submittedCount: 1,
+          pendingCount: 1,
+          pendingAssignmentIds: 1
+        }
+      }
+    ]);
+
+    // optional: populate pending assignment titles
+    let pendingAssignments = [];
+    if (result?.pendingAssignmentIds?.length) {
+      pendingAssignments = await Assignment.find(
+        { _id: { $in: result.pendingAssignmentIds } },
+        { moduleName: 1, category: 1, assignedDate: 1 }
+      ).sort({ assignedDate: -1 }).lean();
+    }
+
+    res.json({
+      success: true,
+      ...result,
+      pendingAssignments
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
