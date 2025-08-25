@@ -200,7 +200,7 @@ app.post("/category-summary", studentController.getCategorySummary);
 
 
 
-router.get("/student/stats/:id", studentController.getStudentAssignmentStats);
+app.get("/student/stats/:id", studentController.getStudentAssignmentStats);
 
 
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
