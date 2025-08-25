@@ -866,6 +866,60 @@ exports.getDetailedAssignmentStats = async (req, res) => {
 
 /* ---------------------- Submissions — detailed compare -------------------- */
 
+
+// ---- helpers reused here (same as in your controller) ----
+function textMatchIgnoreCase(a, b) {
+  const strA = (a ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+  const strB = (b ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+  return strA === strB;
+}
+function arraysMatchIgnoreOrder(a = [], b = []) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  const A = a.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
+  const B = b.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
+  return A.every((v, i) => v === B[i]);
+}
+const hasNonEmptyText  = v => typeof v === "string" && v.trim() !== "";
+const hasNonEmptyArray = v => Array.isArray(v) && v.length > 0;
+const keyHasAny = (key = {}) =>
+  hasNonEmptyText(key.patientName) ||
+  hasNonEmptyText(key.ageOrDob) ||
+  hasNonEmptyArray(key.icdCodes) ||
+  hasNonEmptyArray(key.cptCodes) ||
+  hasNonEmptyArray(key.pcsCodes) ||
+  hasNonEmptyArray(key.hcpcsCodes) ||
+  hasNonEmptyText(key.drgValue) ||
+  hasNonEmptyArray(key.modifiers) ||
+  hasNonEmptyText(key.notes);
+
+// utility: grade dynamic by questionText (ignores blanks)
+function gradeDynamic(targetDynamics = [], submittedDynamics = []) {
+  let correct = 0, wrong = 0, denom = 0;
+  const out = [];
+  for (const q of targetDynamics) {
+    const valid = hasNonEmptyText(q?.questionText) && hasNonEmptyText(q?.answer);
+    if (!valid) continue; // skip blank key items
+    denom++;
+    const match = submittedDynamics.find(sq =>
+      textMatchIgnoreCase(sq?.questionText, q.questionText)
+    );
+    const submittedAnswer = match?.submittedAnswer ?? "";
+    const isCorrect = textMatchIgnoreCase(q.answer, submittedAnswer);
+    if (isCorrect) correct++; else wrong++;
+    out.push({
+      questionText: q.questionText,
+      type: q.type || "dynamic",
+      options: q.options || [],
+      correctAnswer: q.answer,
+      submittedAnswer,
+      isCorrect,
+      _id: match?._id
+    });
+  }
+  return { correct, wrong, denom, enteredDynamics: out };
+}
+
 exports.getAssignmentSubmissions = async (req, res) => {
   try {
     const { assignmentId } = req.params;
@@ -876,19 +930,7 @@ exports.getAssignmentSubmissions = async (req, res) => {
     const getSubModuleName = (defSub) =>
       defSub?.subModuleName || defSub?.name || defSub?.title || "";
 
-    const parentAnswerKey = assignment?.answerKey || {
-      patientName: "",
-      ageOrDob: "",
-      icdCodes: [],
-      cptCodes: [],
-      pcsCodes: [],
-      hcpcsCodes: [],
-      drgValue: "",
-      modifiers: [],
-      notes: "",
-      dynamicQuestions: [],
-    };
-
+    const parentAnswerKey = assignment?.answerKey || {};
     const submissions = await Submission.find({ assignmentId })
       .populate("studentId", "name courseName")
       .lean();
@@ -897,9 +939,9 @@ exports.getAssignmentSubmissions = async (req, res) => {
       let totalCorrect = 0;
       let totalWrong = 0;
 
-      // Initialize parent summary with only the answerKey
+      // Start with only answerKey copy; we'll fill enteredValues if parent submission exists
       const parentSummary = {
-        enteredValues: null, // will be filled if we detect a parent-level entry
+        enteredValues: null,
         answerKey: {
           patientName: parentAnswerKey.patientName ?? "",
           ageOrDob: parentAnswerKey.ageOrDob ?? "",
@@ -910,103 +952,93 @@ exports.getAssignmentSubmissions = async (req, res) => {
           drgValue: parentAnswerKey.drgValue ?? "",
           modifiers: parentAnswerKey.modifiers ?? [],
           notes: parentAnswerKey.notes ?? "",
-          dynamicQuestions: (parentAnswerKey.dynamicQuestions ?? []).map((q) => ({
+          dynamicQuestions: (assignment.dynamicQuestions ?? []).map(q => ({
             questionText: q.questionText,
             options: q.options ?? [],
             answer: q.answer,
-            _id: q._id,
-          })),
+            _id: q._id
+          }))
         },
         correctCount: 0,
         wrongCount: 0,
-        progressPercent: 0,
+        progressPercent: 0
       };
 
       const subModulesSummary = [];
 
-      // For each submitted "answer group"
       (sub.submittedAnswers || []).forEach((sa) => {
-        // Try to resolve as a sub-assignment
         const defSub = (assignment.subAssignments || []).find(
           (s) => sa.subAssignmentId && s._id.toString() === sa.subAssignmentId.toString()
         );
 
-        // ---------- CASE A: TRUE SUB-ASSIGNMENT ----------
+        // ================= CASE A: TRUE SUB-ASSIGNMENT =================
         if (defSub) {
-          const defKey = defSub.answerKey || {
-            patientName: "",
-            ageOrDob: "",
-            icdCodes: [],
-            cptCodes: [],
-            pcsCodes: [],
-            hcpcsCodes: [],
-            drgValue: "",
-            modifiers: [],
-            notes: "",
-          };
-
-          // Compare dynamic questions (index-based)
-          const comparedDynamic = (sa.dynamicQuestions || []).map((dq, idx) => {
-            const defQ = (defSub.dynamicQuestions || [])[idx];
-            const isCorrect = defQ ? textMatchIgnoreCase(dq.submittedAnswer, defQ.answer) : false;
-            return {
-              entered: {
-                questionText: defQ?.questionText || dq.questionText,
-                type: dq.type || "dynamic",
-                options: defQ?.options || dq.options || [],
-                correctAnswer: defQ?.answer ?? null,
-                submittedAnswer: dq.submittedAnswer ?? null,
-                isCorrect,
-                _id: dq._id,
-              },
-              key: defQ
-                ? {
-                    questionText: defQ.questionText,
-                    options: defQ.options || [],
-                    answer: defQ.answer,
-                    _id: defQ._id,
-                  }
-                : null,
-              isCorrect,
-            };
-          });
+          const defKey = defSub.answerKey || {};
+          const targetDynamics = defSub.dynamicQuestions || [];
 
           let correctCount = 0;
           let wrongCount = 0;
+          let denom = 0;
 
-          if (textMatchIgnoreCase(sa.patientName, defKey.patientName)) correctCount++;
-          else wrongCount++;
+          // Prefer dynamic when present
+          if (Array.isArray(targetDynamics) && targetDynamics.length > 0) {
+            const { correct, wrong, denom: d, enteredDynamics } =
+              gradeDynamic(targetDynamics, sa.dynamicQuestions || []);
+            correctCount += correct; wrongCount += wrong; denom += d;
 
-          if (textMatchIgnoreCase(sa.ageOrDob, defKey.ageOrDob)) correctCount++;
-          else wrongCount++;
+            // build summaries
+            subModulesSummary.push({
+              subAssignmentId: sa.subAssignmentId,
+              subModuleName: getSubModuleName(defSub),
+              enteredValues: {
+                patientName: sa.patientName ?? null,
+                ageOrDob: sa.ageOrDob ?? null,
+                icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
+                cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
+                pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
+                hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
+                drgValue: sa.drgValue ?? null,
+                modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
+                notes: sa.notes ?? null,
+                dynamicQuestions: enteredDynamics
+              },
+              answerKey: {
+                patientName: defKey.patientName ?? "",
+                ageOrDob: defKey.ageOrDob ?? "",
+                icdCodes: defKey.icdCodes ?? [],
+                cptCodes: defKey.cptCodes ?? [],
+                pcsCodes: defKey.pcsCodes ?? [],
+                hcpcsCodes: defKey.hcpcsCodes ?? [],
+                drgValue: defKey.drgValue ?? "",
+                modifiers: defKey.modifiers ?? [],
+                notes: defKey.notes ?? "",
+                dynamicQuestions: targetDynamics.map(q => ({
+                  questionText: q.questionText,
+                  options: q.options || [],
+                  answer: q.answer,
+                  _id: q._id
+                }))
+              },
+              correctCount,
+              wrongCount,
+              progressPercent: denom > 0 ? Math.round((correctCount / denom) * 100) : 0
+            });
 
-          if (arraysMatchIgnoreOrder(sa.icdCodes, defKey.icdCodes)) correctCount++;
-          else wrongCount++;
+            totalCorrect += correctCount; totalWrong += wrongCount;
+            return; // done with CASE A (dynamic path)
+          }
 
-          if (arraysMatchIgnoreOrder(sa.cptCodes, defKey.cptCodes)) correctCount++;
-          else wrongCount++;
-
-          if (arraysMatchIgnoreOrder(sa.pcsCodes, defKey.pcsCodes)) correctCount++;
-          else wrongCount++;
-
-          if (arraysMatchIgnoreOrder(sa.hcpcsCodes, defKey.hcpcsCodes)) correctCount++;
-          else wrongCount++;
-
-          if (textMatchIgnoreCase(sa.drgValue, defKey.drgValue)) correctCount++;
-          else wrongCount++;
-
-          if (arraysMatchIgnoreOrder(sa.modifiers, defKey.modifiers)) correctCount++;
-          else wrongCount++;
-
-          if (textMatchIgnoreCase(sa.notes, defKey.notes)) correctCount++;
-          else wrongCount++;
-
-          comparedDynamic.forEach((d) => (d.isCorrect ? correctCount++ : wrongCount++));
-
-          const progressPercent =
-            correctCount + wrongCount > 0
-              ? Math.round((correctCount / (correctCount + wrongCount)) * 100)
-              : 0;
+          // Otherwise grade answerKey BUT ONLY non-empty keys
+          const add = (cond) => { denom++; cond ? correctCount++ : wrongCount++; };
+          if (hasNonEmptyText(defKey.patientName)) add(textMatchIgnoreCase(sa.patientName, defKey.patientName));
+          if (hasNonEmptyText(defKey.ageOrDob))   add(textMatchIgnoreCase(sa.ageOrDob, defKey.ageOrDob));
+          if (hasNonEmptyArray(defKey.icdCodes))  add(arraysMatchIgnoreOrder(sa.icdCodes, defKey.icdCodes));
+          if (hasNonEmptyArray(defKey.cptCodes))  add(arraysMatchIgnoreOrder(sa.cptCodes, defKey.cptCodes));
+          if (hasNonEmptyArray(defKey.pcsCodes))  add(arraysMatchIgnoreOrder(sa.pcsCodes, defKey.pcsCodes));
+          if (hasNonEmptyArray(defKey.hcpcsCodes))add(arraysMatchIgnoreOrder(sa.hcpcsCodes, defKey.hcpcsCodes));
+          if (hasNonEmptyText(defKey.drgValue))   add(textMatchIgnoreCase(sa.drgValue, defKey.drgValue));
+          if (hasNonEmptyArray(defKey.modifiers)) add(arraysMatchIgnoreOrder(sa.modifiers, defKey.modifiers));
+          if (hasNonEmptyText(defKey.notes))      add(textMatchIgnoreCase(sa.notes, defKey.notes));
 
           subModulesSummary.push({
             subAssignmentId: sa.subAssignmentId,
@@ -1021,7 +1053,7 @@ exports.getAssignmentSubmissions = async (req, res) => {
               drgValue: sa.drgValue ?? null,
               modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
               notes: sa.notes ?? null,
-              dynamicQuestions: comparedDynamic.map((d) => d.entered),
+              dynamicQuestions: [] // none graded in key path
             },
             answerKey: {
               patientName: defKey.patientName ?? "",
@@ -1033,95 +1065,86 @@ exports.getAssignmentSubmissions = async (req, res) => {
               drgValue: defKey.drgValue ?? "",
               modifiers: defKey.modifiers ?? [],
               notes: defKey.notes ?? "",
-              dynamicQuestions: comparedDynamic.map((d) => d.key).filter(Boolean),
+              dynamicQuestions: []
             },
             correctCount,
             wrongCount,
-            progressPercent,
+            progressPercent: denom > 0 ? Math.round((correctCount / denom) * 100) : 0
           });
 
-          totalCorrect += correctCount;
-          totalWrong += wrongCount;
-          return; // done with CASE A
+          totalCorrect += correctCount; totalWrong += wrongCount;
+          return;
         }
 
-        // ---------- CASE B: PARENT-LEVEL ONLY ----------
-        // Compare against parentAnswerKey and fill parentSummary.enteredValues
-        const parentComparedDynamic = (sa.dynamicQuestions || []).map((dq, idx) => {
-          // Prefer assignment-level explicit dynamicQuestions; else use answerKey's
-          const defQ =
-            (assignment.dynamicQuestions || [])[idx] ||
-            (parentAnswerKey.dynamicQuestions || [])[idx];
-          const isCorrect = defQ ? textMatchIgnoreCase(dq.submittedAnswer, defQ.answer) : false;
-          return {
-            entered: {
-              questionText: defQ?.questionText || dq.questionText,
-              type: dq.type || "dynamic",
-              options: defQ?.options || dq.options || [],
-              correctAnswer: defQ?.answer ?? null,
-              submittedAnswer: dq.submittedAnswer ?? null,
-              isCorrect,
-              _id: dq._id,
-            },
-            isCorrect,
+        // ================= CASE B: PARENT-LEVEL ONLY =================
+        const targetDynamics = assignment.dynamicQuestions || [];
+
+        let pCorrect = 0, pWrong = 0, pDenom = 0;
+
+        if (Array.isArray(targetDynamics) && targetDynamics.length > 0) {
+          const { correct, wrong, denom, enteredDynamics } =
+            gradeDynamic(targetDynamics, sa.dynamicQuestions || []);
+          pCorrect += correct; pWrong += wrong; pDenom += denom;
+
+          parentSummary.enteredValues = {
+            patientName: sa.patientName ?? null,
+            ageOrDob: sa.ageOrDob ?? null,
+            icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
+            cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
+            pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
+            hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
+            drgValue: sa.drgValue ?? null,
+            modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
+            notes: sa.notes ?? null,
+            dynamicQuestions: enteredDynamics
           };
-        });
+        } else if (keyHasAny(parentAnswerKey)) {
+          // Grade only non-empty parent key fields
+          const addP = (cond) => { pDenom++; cond ? pCorrect++ : pWrong++; };
+          if (hasNonEmptyText(parentAnswerKey.patientName)) addP(textMatchIgnoreCase(sa.patientName, parentAnswerKey.patientName));
+          if (hasNonEmptyText(parentAnswerKey.ageOrDob))   addP(textMatchIgnoreCase(sa.ageOrDob, parentAnswerKey.ageOrDob));
+          if (hasNonEmptyArray(parentAnswerKey.icdCodes))  addP(arraysMatchIgnoreOrder(sa.icdCodes, parentAnswerKey.icdCodes));
+          if (hasNonEmptyArray(parentAnswerKey.cptCodes))  addP(arraysMatchIgnoreOrder(sa.cptCodes, parentAnswerKey.cptCodes));
+          if (hasNonEmptyArray(parentAnswerKey.pcsCodes))  addP(arraysMatchIgnoreOrder(sa.pcsCodes, parentAnswerKey.pcsCodes));
+          if (hasNonEmptyArray(parentAnswerKey.hcpcsCodes))addP(arraysMatchIgnoreOrder(sa.hcpcsCodes, parentAnswerKey.hcpcsCodes));
+          if (hasNonEmptyText(parentAnswerKey.drgValue))   addP(textMatchIgnoreCase(sa.drgValue, parentAnswerKey.drgValue));
+          if (hasNonEmptyArray(parentAnswerKey.modifiers)) addP(arraysMatchIgnoreOrder(sa.modifiers, parentAnswerKey.modifiers));
+          if (hasNonEmptyText(parentAnswerKey.notes))      addP(textMatchIgnoreCase(sa.notes, parentAnswerKey.notes));
 
-        let pCorrect = 0;
-        let pWrong = 0;
+          parentSummary.enteredValues = {
+            patientName: sa.patientName ?? null,
+            ageOrDob: sa.ageOrDob ?? null,
+            icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
+            cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
+            pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
+            hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
+            drgValue: sa.drgValue ?? null,
+            modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
+            notes: sa.notes ?? null,
+            dynamicQuestions: [] // none graded in key path
+          };
+        } else {
+          // Nothing to grade at parent level; keep 0/0 and null enteredValues if you prefer
+          parentSummary.enteredValues = {
+            patientName: sa.patientName ?? null,
+            ageOrDob: sa.ageOrDob ?? null,
+            icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
+            cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
+            pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
+            hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
+            drgValue: sa.drgValue ?? null,
+            modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
+            notes: sa.notes ?? null,
+            dynamicQuestions: []
+          };
+        }
 
-        if (textMatchIgnoreCase(sa.patientName, parentAnswerKey.patientName)) pCorrect++;
-        else pWrong++;
-
-        if (textMatchIgnoreCase(sa.ageOrDob, parentAnswerKey.ageOrDob)) pCorrect++;
-        else pWrong++;
-
-        if (arraysMatchIgnoreOrder(sa.icdCodes, parentAnswerKey.icdCodes)) pCorrect++;
-        else pWrong++;
-
-        if (arraysMatchIgnoreOrder(sa.cptCodes, parentAnswerKey.cptCodes)) pCorrect++;
-        else pWrong++;
-
-        if (arraysMatchIgnoreOrder(sa.pcsCodes, parentAnswerKey.pcsCodes)) pCorrect++;
-        else pWrong++;
-
-        if (arraysMatchIgnoreOrder(sa.hcpcsCodes, parentAnswerKey.hcpcsCodes)) pCorrect++;
-        else pWrong++;
-
-        if (textMatchIgnoreCase(sa.drgValue, parentAnswerKey.drgValue)) pCorrect++;
-        else pWrong++;
-
-        if (arraysMatchIgnoreOrder(sa.modifiers, parentAnswerKey.modifiers)) pCorrect++;
-        else pWrong++;
-
-        if (textMatchIgnoreCase(sa.notes, parentAnswerKey.notes)) pCorrect++;
-        else pWrong++;
-
-        parentComparedDynamic.forEach((d) => (d.isCorrect ? pCorrect++ : pWrong++));
-
-        const pProgress =
-          pCorrect + pWrong > 0 ? Math.round((pCorrect / (pCorrect + pWrong)) * 100) : 0;
-
-        parentSummary.enteredValues = {
-          patientName: sa.patientName ?? null,
-          ageOrDob: sa.ageOrDob ?? null,
-          icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
-          cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
-          pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
-          hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
-          drgValue: sa.drgValue ?? null,
-          modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
-          notes: sa.notes ?? null,
-          dynamicQuestions: parentComparedDynamic.map((d) => d.entered),
-        };
         parentSummary.correctCount = pCorrect;
         parentSummary.wrongCount = pWrong;
-        parentSummary.progressPercent = pProgress;
+        parentSummary.progressPercent = pDenom > 0 ? Math.round((pCorrect / pDenom) * 100) : 0;
 
         totalCorrect += pCorrect;
         totalWrong += pWrong;
-
-        // IMPORTANT: do NOT push anything into subModulesSummary here.
       });
 
       const overallProgress =
