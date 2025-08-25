@@ -1091,77 +1091,69 @@ exports.getCategorySummary = async (req, res) => {
 
 
 // GET /stats/student/:id
-exports.getStudentAssignmentStats = async (req, res) => {
+// GET /stats/student/:id
+exports.getStudentAssignmentFullStats = async (req, res) => {
   try {
     const studentId = new mongoose.Types.ObjectId(req.params.id);
 
-    const [result] = await Student.aggregate([
-      { $match: { _id: studentId } },
-      {
-        $lookup: {
-          from: "assignments",
-          localField: "courseName",
-          foreignField: "category",
-          as: "assignments"
-        }
-      },
-      {
-        $lookup: {
-          from: "submissions",
-          let: { sid: "$_id" },
-          pipeline: [
-            { $match: { $expr: { $eq: ["$studentId", "$$sid"] } } },
-            { $group: { _id: "$assignmentId" } } // unique submitted assignment ids
-          ],
-          as: "submittedAssignments"
-        }
-      },
-      {
-        $addFields: {
-          totalAssignments: { $size: "$assignments" },
-          submittedCount: { $size: "$submittedAssignments" }
-        }
-      },
-      {
-        $addFields: {
-          pendingCount: {
-            $max: [{ $subtract: ["$totalAssignments", "$submittedCount"] }, 0]
-          },
-          // compute pending assignment ids = all - submitted
-          pendingAssignmentIds: {
-            $setDifference: [
-              { $map: { input: "$assignments", as: "a", in: "$$a._id" } },
-              { $map: { input: "$submittedAssignments", as: "s", in: "$$s._id" } }
-            ]
-          }
-        }
-      },
-      {
-        $project: {
-          name: 1,
-          courseName: 1,
-          totalAssignments: 1,
-          submittedCount: 1,
-          pendingCount: 1,
-          pendingAssignmentIds: 1
-        }
-      }
-    ]);
-
-    // optional: populate pending assignment titles
-    let pendingAssignments = [];
-    if (result?.pendingAssignmentIds?.length) {
-      pendingAssignments = await Assignment.find(
-        { _id: { $in: result.pendingAssignmentIds } },
-        { moduleName: 1, category: 1, assignedDate: 1 }
-      ).sort({ assignedDate: -1 }).lean();
+    const student = await Student.findById(studentId).lean();
+    if (!student) {
+      return res.status(404).json({ success: false, message: "Student not found" });
     }
+
+    // 1. All assignments in his course
+    const assignments = await Assignment.find(
+      { category: student.courseName },
+      { moduleName: 1, category: 1, assignedDate: 1 }
+    ).lean();
+
+    // 2. All submissions by this student
+    const submissions = await Submission.find(
+      { studentId },
+      { assignmentId: 1, totalCorrect: 1, totalWrong: 1, overallProgress: 1, submittedAnswers: 1, submissionDate: 1 }
+    ).populate("assignmentId", "moduleName category assignedDate")
+    .lean();
+
+    // 3. Submitted assignment IDs
+    const submittedIds = submissions.map(s => String(s.assignmentId?._id));
+
+    // 4. Pending assignments = total - submitted
+    const pendingAssignments = assignments.filter(a => !submittedIds.includes(String(a._id)));
+
+    // 5. Format submitted with details
+    const submittedAssignments = submissions.map(s => ({
+      assignmentId: s.assignmentId?._id,
+      moduleName: s.assignmentId?.moduleName,
+      category: s.assignmentId?.category,
+      submissionDate: s.submissionDate,
+      totalCorrect: s.totalCorrect,
+      totalWrong: s.totalWrong,
+      overallProgress: s.overallProgress,
+      // breakdown of each sub-assignment
+      subAssignments: s.submittedAnswers.map(sub => ({
+        subAssignmentId: sub.subAssignmentId,
+        correctCount: sub.correctCount,
+        wrongCount: sub.wrongCount,
+        progressPercent: sub.progressPercent
+      }))
+    }));
 
     res.json({
       success: true,
-      ...result,
-      pendingAssignments
+      student: {
+        _id: student._id,
+        name: student.name,
+        courseName: student.courseName
+      },
+      stats: {
+        totalAssignments: assignments.length,
+        submittedCount: submittedAssignments.length,
+        pendingCount: pendingAssignments.length,
+        submittedAssignments,
+        pendingAssignments
+      }
     });
+
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
