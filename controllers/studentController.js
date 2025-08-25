@@ -346,13 +346,11 @@ exports.updateStudent = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Find existing student
     const existingStudent = await Student.findById(id);
     if (!existingStudent) {
       return res.status(404).json({ success: false, message: "Student not found" });
     }
 
-    // Base updates (use existing values if not provided)
     const updatedData = {
       name: req.body.name ?? existingStudent.name,
       password: req.body.password ?? existingStudent.password,
@@ -360,26 +358,22 @@ exports.updateStudent = async (req, res) => {
       paidAmount: req.body.paidAmount !== undefined ? req.body.paidAmount : existingStudent.paidAmount,
       remainingAmount: req.body.remainingAmount !== undefined ? req.body.remainingAmount : existingStudent.remainingAmount,
       enrolledDate: req.body.enrolledDate ?? existingStudent.enrolledDate,
+      category: req.body.category ?? existingStudent.category,       // 👈 NEW
       profileImage: req.file ? req.file.path : existingStudent.profileImage,
     };
 
-    // Build update object so we can $unset when needed
     const update = { $set: updatedData };
 
-    // expiryDate handling (same as addStudent)
+    // expiryDate + TTL sync
     if ("expiryDate" in req.body) {
       const incoming = req.body.expiryDate;
-
       if (incoming === null || incoming === "") {
-        // Clear expiry if explicitly sent as null/empty
         update.$unset = { ...(update.$unset || {}), expiryDate: "", expiresAt: "" };
       } else {
-        // Set/Update both fields
-        update.$set.expiryDate = incoming;          // Admin-provided expiry date
-        update.$set.expiresAt = incoming;           // TTL field mirrors expiry date
+        update.$set.expiryDate = incoming;
+        update.$set.expiresAt = incoming;
       }
     } else {
-      // Not provided => keep existing values
       update.$set.expiryDate = existingStudent.expiryDate;
       update.$set.expiresAt = existingStudent.expiresAt;
     }
@@ -394,6 +388,7 @@ exports.updateStudent = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 
 // Get all students with summary info + progress
