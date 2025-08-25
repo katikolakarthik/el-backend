@@ -649,6 +649,7 @@ exports.getAssignmentsCountByCategory = async (req, res) => {
 };
 
 // Get assignment statistics for a student by category
+// Get assignment statistics for a student by category
 exports.getAssignmentStatsByCategory = async (req, res) => {
   try {
     const { category, studentId } = req.params;
@@ -660,7 +661,6 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
       });
     }
 
-    // Validate studentId
     if (!mongoose.Types.ObjectId.isValid(studentId)) {
       return res.status(400).json({
         success: false,
@@ -670,10 +670,8 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
 
     const formattedCategory = toUpperTrim(category);
 
-    // Get all assignments for the category
-    const assignments = await Assignment.find({
-      category: formattedCategory,
-    });
+    // 1) Get all assignments in this category
+    const assignments = await Assignment.find({ category: formattedCategory }).lean();
 
     if (!assignments || assignments.length === 0) {
       return res.json({
@@ -683,38 +681,70 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
         completed: 0,
         averageScore: "0%",
         pending: 0,
+        stats: { assigned: 0, completed: 0, averageScore: 0, pending: 0 },
         message: "No assignments found for this category",
       });
     }
 
-    // Get all submissions for this student and category
+    // Map: assignmentId -> number of sub-assignments (parent-only completion logic)
+    const subCountsByAssignment = new Map(
+      assignments.map(a => [String(a._id), (a.subAssignments?.length || 0)])
+    );
+
+    // 2) Fetch this student's submissions for those assignments
     const submissions = await Submission.find({
       studentId: new mongoose.Types.ObjectId(studentId),
-      assignmentId: { $in: assignments.map((a) => a._id) },
-    });
+      assignmentId: { $in: assignments.map(a => a._id) },
+    }).lean();
 
-    // Calculate statistics
     const totalAssigned = assignments.length;
-    const completed = submissions.length;
+
+    // Helper: is this parent assignment fully completed?
+    // Rule: 
+    //  - If parent has subs: submission must contain answers for *all* subs
+    //    and (OPTIONAL strict) every sub has 100% progress.
+    //  - If parent has no subs: consider it complete if overallProgress === 100 (or >0 if you prefer).
+    const PARENT_COMPLETE_STRICT = true; // set false if you only care that all subs are attempted
+
+    const isParentComplete = (submission) => {
+      const aId = String(submission.assignmentId);
+      const subCount = subCountsByAssignment.get(aId) || 0;
+      const submittedSubs = submission.submittedAnswers?.length || 0;
+
+      if (subCount > 0) {
+        if (submittedSubs < subCount) return false;
+        if (!PARENT_COMPLETE_STRICT) return true;
+        // strict: all sub-answers 100%
+        return submission.submittedAnswers.every(s => Number(s?.progressPercent) === 100);
+      } else {
+        // no subs: rely on overallProgress
+        return Number(submission.overallProgress) === 100;
+      }
+    };
+
+    // 3) Compute completed based on parent-completion logic
+    const completed = submissions.reduce((acc, subm) => acc + (isParentComplete(subm) ? 1 : 0), 0);
     const pending = totalAssigned - completed;
 
-    // Calculate average score
-    let totalScore = 0;
-    let totalSubmissionsWithScore = 0;
+    // 4) Average score:
+    // Option A (strict): only average fully completed parent assignments
+    const completedScores = submissions
+      .filter(s => isParentComplete(s))
+      .map(s => Number(s.overallProgress))
+      .filter(v => Number.isFinite(v));
 
-    submissions.forEach((submission) => {
-      if (submission.overallProgress !== undefined && submission.overallProgress !== null) {
-        totalScore += submission.overallProgress;
-        totalSubmissionsWithScore++;
-      }
-    });
+    // Option B (lenient): average whatever submissions have an overallProgress
+    // const completedScores = submissions
+    //   .map(s => Number(s.overallProgress))
+    //   .filter(v => Number.isFinite(v));
 
-    const averageScore =
-      totalSubmissionsWithScore > 0
-        ? Math.round((totalScore / totalSubmissionsWithScore) * 100) / 100
-        : 0;
+    const averageScoreRaw = completedScores.length
+      ? completedScores.reduce((a, b) => a + b, 0) / completedScores.length
+      : 0;
 
-    res.json({
+    const averageScore = Math.round(averageScoreRaw * 100) / 100;
+
+    return res.json({
       success: true,
       category: formattedCategory,
       totalAssigned,
@@ -723,16 +753,13 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
       pending,
       stats: {
         assigned: totalAssigned,
-        completed: completed,
-        averageScore: averageScore,
-        pending: pending,
+        completed,
+        averageScore,
+        pending,
       },
     });
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
+    return res.status(500).json({ success: false, error: err.message });
   }
 };
 
