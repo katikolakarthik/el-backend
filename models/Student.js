@@ -7,7 +7,7 @@ const studentSchema = new mongoose.Schema({
   paidAmount: Number,
   remainingAmount: Number,
   enrolledDate: Date,
-  expiryDate: { type: Date, required: true }, // Add expiry date field
+  expiryDate: { type: Date, required: false}, // Add expiry date field
   profileImage: String,
   role: { type: String, default: "user" },
   // Add a field that will be used for TTL index
