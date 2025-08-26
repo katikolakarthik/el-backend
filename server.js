@@ -17,7 +17,7 @@ app.use(
     origin: function (origin, callback) {
       const allowedOrigins = [
         "https://el-front-umber.vercel.app",
-        "https://el-front-umber.vercel.app"
+        "https://www.wellmedai.com"
       ];
       if (!origin || allowedOrigins.indexOf(origin) !== -1) {
         callback(null, true);
