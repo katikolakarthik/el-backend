@@ -34,7 +34,7 @@ app.use(
 app.use(express.json());
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGO_URI || "mongodb+srv://adepusanjay444:12345@cluster0.nbd7uta.mongodb.net/Wellmed")
+mongoose.connect(process.env.MONGO_URI ||"mongodb+srv://abcd:1234@cluster0.wruipve.mongodb.net/Wellmed" )
   .then(() => console.log("✅ MongoDB Connected"))
   .catch(err => console.error("❌ MongoDB Error:", err));
 
