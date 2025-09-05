@@ -3,10 +3,10 @@ const mongoose = require("mongoose");
 // Store each dynamic question answer along with grading details
 const dynamicQuestionAnswerSchema = new mongoose.Schema({
   questionText: String,
-  type: { type: String }, // e.g., 'mcq', 'text'
-  options: [String],      // for MCQ
-  correctAnswer: String,  // from assignment definition
-  submittedAnswer: String, // from student
+  type: { type: String },   // e.g., 'mcq', 'text'
+  options: [String],        // for MCQ
+  correctAnswer: String,    // from assignment definition
+  submittedAnswer: String,  // from student
   isCorrect: Boolean
 });
 
@@ -19,11 +19,12 @@ const subAnswerSchema = new mongoose.Schema({
   ageOrDob: String,
   icdCodes: [String],
   cptCodes: [String],
-  pcsCodes: [String],        // NEW: ICD-10-PCS codes
-  hcpcsCodes: [String],      // NEW: HCPCS codes
-  drgValue: String,          // NEW: DRG Value
-  modifiers: [String],       // NEW: CPT/HCPCS Modifiers
+  pcsCodes: [String],      // ICD-10-PCS codes
+  hcpcsCodes: [String],    // HCPCS codes
+  drgValue: String,        // DRG Value
+  modifiers: [String],     // CPT/HCPCS Modifiers
   notes: String,
+  adx: String,             // NEW: student's Adx entry
 
   // Dynamic question answers
   dynamicQuestions: [dynamicQuestionAnswerSchema],
@@ -34,7 +35,6 @@ const subAnswerSchema = new mongoose.Schema({
   progressPercent: Number
 });
 
-
 const submissionSchema = new mongoose.Schema({
   studentId: { type: mongoose.Schema.Types.ObjectId, ref: "Student" },
   assignmentId: { type: mongoose.Schema.Types.ObjectId, ref: "Assignment" },
@@ -43,14 +43,12 @@ const submissionSchema = new mongoose.Schema({
   totalWrong: Number,
   overallProgress: Number,
   submissionDate: { type: Date, default: Date.now },
-  // Add TTL field that references student expiry
+
+  // TTL field that references student expiry
   expiresAt: { type: Date, index: { expireAfterSeconds: 0 } }
 });
 
-
-
 // Create TTL index
 submissionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-
 
 module.exports = mongoose.model("Submission", submissionSchema);
