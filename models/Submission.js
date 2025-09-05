@@ -24,7 +24,7 @@ const subAnswerSchema = new mongoose.Schema({
   drgValue: String,        // DRG Value
   modifiers: [String],     // CPT/HCPCS Modifiers
   notes: String,
-  adx: String,             // NEW: student's Adx entry
+  adx: String,             // student's Adx entry
 
   // Dynamic question answers
   dynamicQuestions: [dynamicQuestionAnswerSchema],
@@ -38,17 +38,24 @@ const subAnswerSchema = new mongoose.Schema({
 const submissionSchema = new mongoose.Schema({
   studentId: { type: mongoose.Schema.Types.ObjectId, ref: "Student" },
   assignmentId: { type: mongoose.Schema.Types.ObjectId, ref: "Assignment" },
+
+  // One row per assignment per student; we stamp the timer on first submit
+  startedAt: { type: Date },        // when the student's attempt started (server-side)
+  mustSubmitBy: { type: Date },     // startedAt + timeLimitMinutes (if set)
+
   submittedAnswers: [subAnswerSchema],
   totalCorrect: Number,
   totalWrong: Number,
   overallProgress: Number,
   submissionDate: { type: Date, default: Date.now },
 
-  // TTL field that references student expiry
+  // TTL field that references student expiry (kept as-is)
   expiresAt: { type: Date, index: { expireAfterSeconds: 0 } }
 });
 
-// Create TTL index
+// Useful index
+submissionSchema.index({ studentId: 1, assignmentId: 1 }, { unique: true });
+// TTL index (already present)
 submissionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 module.exports = mongoose.model("Submission", submissionSchema);
