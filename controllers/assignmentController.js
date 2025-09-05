@@ -39,7 +39,8 @@ const hasPredefinedData = (answerKey) => {
     (answerKey.hcpcsCodes && answerKey.hcpcsCodes.length) ||
     answerKey.drgValue ||
     (answerKey.modifiers && answerKey.modifiers.length) ||
-    answerKey.notes
+    answerKey.notes ||
+    answerKey.adx // NEW: include Adx in “has data?”
   );
 };
 
@@ -66,13 +67,17 @@ const formatDynamicOut = (dynamicQuestions) => {
 /* ----------------------------- Controllers ------------------------------- */
 
 // Create assignment (supports parent-level or multiple sub-assignments)
+// Also supports optional windowStart/windowEnd (timer)
 exports.addAssignment = async (req, res) => {
   try {
-    const { moduleName, subAssignments, category } = req.body;
+    const { moduleName, subAssignments, category, windowStart, windowEnd } = req.body;
     const files = req.files?.assignmentPdf || [];
 
     if (!category || !category.trim()) {
       return res.status(400).json({ success: false, message: "category is required" });
+    }
+    if (!moduleName || !moduleName.trim()) {
+      return res.status(400).json({ success: false, message: "moduleName is required" });
     }
 
     const formatDynamic = (questions) =>
@@ -93,13 +98,31 @@ exports.addAssignment = async (req, res) => {
       drgValue: sub.answerDrgValue || null,
       modifiers: sub.answerModifiers ? parseCsv(sub.answerModifiers) : [],
       notes: sub.answerNotes || null,
+      adx: sub.answerAdx || null, // NEW: predefined Adx
     });
 
-    let assignmentData = {
+    const assignmentData = {
       moduleName,
       category: toUpperTrim(category), // normalize to uppercase for consistency
       // assignedStudents is deprecated; ignore any incoming values
     };
+
+    // Optional time window (timer) — both are optional
+    if (windowStart) {
+      const ws = new Date(windowStart);
+      if (!isNaN(ws.getTime())) assignmentData.windowStart = ws;
+    }
+    if (windowEnd) {
+      const we = new Date(windowEnd);
+      if (!isNaN(we.getTime())) assignmentData.windowEnd = we;
+    }
+    if (assignmentData.windowStart && assignmentData.windowEnd) {
+      if (assignmentData.windowEnd < assignmentData.windowStart) {
+        return res
+          .status(400)
+          .json({ success: false, message: "windowEnd must be >= windowStart" });
+      }
+    }
 
     if (subAssignments) {
       const parsed = JSON.parse(subAssignments);
@@ -146,7 +169,7 @@ exports.addAssignment = async (req, res) => {
     res.json({
       success: true,
       message:
-        "Assignment saved to category successfully (supports predefined, text, and MCQ dynamic questions)",
+        "Assignment saved to category successfully (supports predefined, text, and MCQ dynamic questions; optional time window).",
       assignment,
     });
   } catch (err) {
@@ -165,6 +188,8 @@ exports.getAssignments = async (req, res) => {
       assignedStudents: a.assignedStudents,
       assignedDate: a.assignedDate,
       assignmentPdf: a.assignmentPdf || null,
+      windowStart: a.windowStart || null, // include timer info
+      windowEnd: a.windowEnd || null,
 
       // Merged questions (parent level)
       questions: [...formatPredefinedOut(a.answerKey), ...formatDynamicOut(a.dynamicQuestions)],
@@ -182,9 +207,7 @@ exports.getAssignments = async (req, res) => {
           _id: sa._id,
           subModuleName: sa.subModuleName,
           assignmentPdf: sa.assignmentPdf || null,
-
           questions: [...formatPredefinedOut(sa.answerKey), ...formatDynamicOut(sa.dynamicQuestions)],
-
           // On-the-fly dynamicAnswerKey (sub-assignment level)
           dynamicAnswerKey:
             sa.dynamicQuestions?.map((q) => ({
@@ -205,7 +228,7 @@ exports.getAssignmentById = async (req, res) => {
   try {
     const { id } = req.params;
     const assignment = await Assignment.findById(id).populate("assignedStudents");
-    
+
     if (!assignment) {
       return res.status(404).json({ error: "Assignment not found" });
     }
@@ -218,19 +241,22 @@ exports.getAssignmentById = async (req, res) => {
       assignedStudents: assignment.assignedStudents,
       assignedDate: assignment.assignedDate,
       assignmentPdf: assignment.assignmentPdf || null,
+      windowStart: assignment.windowStart || null,
+      windowEnd: assignment.windowEnd || null,
 
       // Parent level data
       answerKey: assignment.answerKey || null,
       dynamicQuestions: assignment.dynamicQuestions || [],
 
       // Sub-assignments
-      subAssignments: assignment.subAssignments?.map((sa) => ({
-        _id: sa._id,
-        subModuleName: sa.subModuleName,
-        assignmentPdf: sa.assignmentPdf || null,
-        answerKey: sa.answerKey || null,
-        dynamicQuestions: sa.dynamicQuestions || [],
-      })) || [],
+      subAssignments:
+        assignment.subAssignments?.map((sa) => ({
+          _id: sa._id,
+          subModuleName: sa.subModuleName,
+          assignmentPdf: sa.assignmentPdf || null,
+          answerKey: sa.answerKey || null,
+          dynamicQuestions: sa.dynamicQuestions || [],
+        })) || [],
     };
 
     res.json(formatted);
@@ -285,11 +311,18 @@ exports.deleteAllAssignments = async (req, res) => {
   }
 };
 
-// Update assignment module
+// Update assignment module (also supports optional timer and Adx in predefined)
 exports.updateAssignment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { moduleName, assignedStudents, subAssignments, category } = req.body;
+    const {
+      moduleName,
+      assignedStudents,
+      subAssignments,
+      category,
+      windowStart,
+      windowEnd,
+    } = req.body;
     const files = req.files?.assignmentPdf || [];
 
     // Find the existing assignment
@@ -316,6 +349,7 @@ exports.updateAssignment = async (req, res) => {
       drgValue: sub.answerDrgValue || null,
       modifiers: sub.answerModifiers ? parseCsv(sub.answerModifiers) : [],
       notes: sub.answerNotes || null,
+      adx: sub.answerAdx || null, // NEW
     });
 
     // Prepare update data
@@ -326,6 +360,31 @@ exports.updateAssignment = async (req, res) => {
 
     if (category) {
       updateData.category = toUpperTrim(category);
+    }
+
+    // Optional timer
+    if (windowStart !== undefined) {
+      if (windowStart) {
+        const ws = new Date(windowStart);
+        if (!isNaN(ws.getTime())) updateData.windowStart = ws;
+      } else {
+        updateData.windowStart = undefined; // unset if empty string/null
+      }
+    }
+    if (windowEnd !== undefined) {
+      if (windowEnd) {
+        const we = new Date(windowEnd);
+        if (!isNaN(we.getTime())) updateData.windowEnd = we;
+      } else {
+        updateData.windowEnd = undefined;
+      }
+    }
+    if (updateData.windowStart && updateData.windowEnd) {
+      if (updateData.windowEnd < updateData.windowStart) {
+        return res
+          .status(400)
+          .json({ success: false, message: "windowEnd must be >= windowStart" });
+      }
     }
 
     if (subAssignments) {
@@ -405,6 +464,8 @@ exports.getAssignmentsByStudentId = async (req, res) => {
         moduleName: 1,
         assignedDate: 1,
         subAssignments: 1,
+        windowStart: 1,
+        windowEnd: 1,
       }
     ).lean();
 
@@ -470,6 +531,8 @@ exports.getAssignmentDetailsForStudent = async (req, res) => {
       assignedStudents: assignment.assignedStudents,
       assignedDate: assignment.assignedDate,
       assignmentPdf: assignment.assignmentPdf || null,
+      windowStart: assignment.windowStart || null,
+      windowEnd: assignment.windowEnd || null,
 
       // Parent-level questions
       questions: [
@@ -504,6 +567,7 @@ exports.getAssignmentDetailsForStudent = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 // Get all assignments by category
 exports.getAssignmentsByCategory = async (req, res) => {
@@ -576,6 +640,8 @@ exports.getAssignmentsByCategory = async (req, res) => {
         assignedStudents: assignment.assignedStudents,
         assignedDate: assignment.assignedDate,
         assignmentPdf: assignment.assignmentPdf || null,
+        windowStart: assignment.windowStart || null,
+        windowEnd: assignment.windowEnd || null,
         isCompleted: parentCompleted, // Parent completion status
 
         // Parent-level questions
@@ -651,7 +717,6 @@ exports.getAssignmentsCountByCategory = async (req, res) => {
 
 
 // Get assignment statistics for a student by category
-// Get assignment statistics for a student by category
 exports.getAssignmentStatsByCategory = async (req, res) => {
   try {
     const { category, studentId } = req.params;
@@ -687,12 +752,12 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
       assignmentId: { $in: assignments.map(a => a._id) },
     }).lean();
 
-    // ---- SETTINGS (CHANGED) ----
-    const REQUIRE_100_EACH_SUB = false;      // was true; this was causing your “only 1 completed”
-    const NO_SUB_MIN_PROGRESS   = 0;         // no-sub parent counts as soon as there’s a submission
-    const USE_OVERALL_FOR_MULTI_SUB = true;  // if overallProgress exists, allow it to mark completion
-    const MULTI_SUB_MIN_OVERALL = 0;         // threshold for overallProgress to count as complete
-    // ----------------------------
+    // ---- SETTINGS ----
+    const REQUIRE_100_EACH_SUB = false;
+    const NO_SUB_MIN_PROGRESS   = 0;
+    const USE_OVERALL_FOR_MULTI_SUB = true;
+    const MULTI_SUB_MIN_OVERALL = 0;
+    // ------------------
 
     // Dedup by assignmentId (keep latest)
     const latestSubmissionByAssignment = new Map();
@@ -714,26 +779,26 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
       if (subCount === 0) {
         // No subs: any submission (or >= threshold) counts
         const prog = Number(subm.overallProgress ?? 0);
-        complete = prog >= NO_SUB_MIN_PROGRESS; // (CHANGED)
+        complete = prog >= NO_SUB_MIN_PROGRESS;
       } else {
         // With subs:
         const answers = Array.isArray(subm.submittedAnswers) ? subm.submittedAnswers : [];
         const uniqueCovered = new Set(
           answers.map(sa => sa?.subAssignmentId ? String(sa.subAssignmentId) : null).filter(Boolean)
         );
-        const coversAllByIds   = uniqueCovered.size >= subCount;     // (CHANGED) allow >= in case of dup
-        const coversAllByCount = answers.length   >= subCount;       // (CHANGED) fallback when ids missing
+        const coversAllByIds   = uniqueCovered.size >= subCount;
+        const coversAllByCount = answers.length   >= subCount;
 
         if (coversAllByIds || coversAllByCount) {
           if (REQUIRE_100_EACH_SUB) {
             complete = answers.every(sa => Number(sa?.progressPercent) === 100);
           } else {
-            complete = true; // (CHANGED) mark as completed once all subs answered (any score)
+            complete = true;
           }
         } else if (USE_OVERALL_FOR_MULTI_SUB) {
           const overall = Number(subm.overallProgress ?? 0);
           if (Number.isFinite(overall) && overall >= MULTI_SUB_MIN_OVERALL) {
-            complete = true; // (CHANGED) rescue path when subAssignmentId isn’t stored
+            complete = true;
           }
         }
       }
@@ -744,13 +809,11 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
       if (Number.isFinite(prog)) scoreByAssignment.set(aId, prog);
     }
 
-    // Count how many parents have ANY submission (useful for debugging your case)
-    const submittedParents = latestSubmissionByAssignment.size; // (NEW)
+    const submittedParents = latestSubmissionByAssignment.size;
 
     const completed = Array.from(completionByAssignment.values()).filter(Boolean).length;
     const pending = totalAssigned - completed;
 
-    // Average over completed parents (change if you prefer all submissions)
     const completedScores = Array.from(scoreByAssignment.entries())
       .filter(([aId]) => completionByAssignment.get(aId))
       .map(([, v]) => v);
@@ -769,7 +832,7 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
       averageScore: `${averageScore}%`,
       pending,
       stats: { assigned: totalAssigned, completed, averageScore, pending },
-      debug: { submittedParents } // (optional) remove once verified
+      debug: { submittedParents }
     });
 
   } catch (err) {
@@ -826,11 +889,15 @@ exports.getDetailedAssignmentStats = async (req, res) => {
           assignment: assignment.moduleName,
           score: submission.overallProgress || 0,
           submissionDate: submission.submissionDate,
+          windowStart: assignment.windowStart || null,
+          windowEnd: assignment.windowEnd || null,
         });
       } else {
         pendingAssignments.push({
           assignment: assignment.moduleName,
           assignedDate: assignment.assignedDate,
+          windowStart: assignment.windowStart || null,
+          windowEnd: assignment.windowEnd || null,
         });
       }
     });
@@ -868,12 +935,12 @@ exports.getDetailedAssignmentStats = async (req, res) => {
 
 
 // ---- helpers reused here (same as in your controller) ----
-function textMatchIgnoreCase(a, b) {
+function textMatchIgnoreCase_b(a, b) {
   const strA = (a ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
   const strB = (b ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
   return strA === strB;
 }
-function arraysMatchIgnoreOrder(a = [], b = []) {
+function arraysMatchIgnoreOrder_b(a = [], b = []) {
   if (!Array.isArray(a) || !Array.isArray(b)) return false;
   if (a.length !== b.length) return false;
   const A = a.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
@@ -891,7 +958,8 @@ const keyHasAny = (key = {}) =>
   hasNonEmptyArray(key.hcpcsCodes) ||
   hasNonEmptyText(key.drgValue) ||
   hasNonEmptyArray(key.modifiers) ||
-  hasNonEmptyText(key.notes);
+  hasNonEmptyText(key.notes) ||
+  hasNonEmptyText(key.adx); // NEW: consider Adx
 
 // utility: grade dynamic by questionText (ignores blanks)
 function gradeDynamic(targetDynamics = [], submittedDynamics = []) {
@@ -902,10 +970,10 @@ function gradeDynamic(targetDynamics = [], submittedDynamics = []) {
     if (!valid) continue; // skip blank key items
     denom++;
     const match = submittedDynamics.find(sq =>
-      textMatchIgnoreCase(sq?.questionText, q.questionText)
+      textMatchIgnoreCase_b(sq?.questionText, q.questionText)
     );
     const submittedAnswer = match?.submittedAnswer ?? "";
-    const isCorrect = textMatchIgnoreCase(q.answer, submittedAnswer);
+    const isCorrect = textMatchIgnoreCase_b(q.answer, submittedAnswer);
     if (isCorrect) correct++; else wrong++;
     out.push({
       questionText: q.questionText,
@@ -919,6 +987,7 @@ function gradeDynamic(targetDynamics = [], submittedDynamics = []) {
   }
   return { correct, wrong, denom, enteredDynamics: out };
 }
+
 
 exports.getAssignmentSubmissions = async (req, res) => {
   try {
@@ -952,6 +1021,7 @@ exports.getAssignmentSubmissions = async (req, res) => {
           drgValue: parentAnswerKey.drgValue ?? "",
           modifiers: parentAnswerKey.modifiers ?? [],
           notes: parentAnswerKey.notes ?? "",
+          adx: parentAnswerKey.adx ?? "", // NEW
           dynamicQuestions: (assignment.dynamicQuestions ?? []).map(q => ({
             questionText: q.questionText,
             options: q.options ?? [],
@@ -1000,6 +1070,7 @@ exports.getAssignmentSubmissions = async (req, res) => {
                 drgValue: sa.drgValue ?? null,
                 modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
                 notes: sa.notes ?? null,
+                adx: sa.adx ?? null, // NEW: include student-entered Adx
                 dynamicQuestions: enteredDynamics
               },
               answerKey: {
@@ -1012,6 +1083,7 @@ exports.getAssignmentSubmissions = async (req, res) => {
                 drgValue: defKey.drgValue ?? "",
                 modifiers: defKey.modifiers ?? [],
                 notes: defKey.notes ?? "",
+                adx: defKey.adx ?? "", // NEW
                 dynamicQuestions: targetDynamics.map(q => ({
                   questionText: q.questionText,
                   options: q.options || [],
@@ -1030,15 +1102,16 @@ exports.getAssignmentSubmissions = async (req, res) => {
 
           // Otherwise grade answerKey BUT ONLY non-empty keys
           const add = (cond) => { denom++; cond ? correctCount++ : wrongCount++; };
-          if (hasNonEmptyText(defKey.patientName)) add(textMatchIgnoreCase(sa.patientName, defKey.patientName));
-          if (hasNonEmptyText(defKey.ageOrDob))   add(textMatchIgnoreCase(sa.ageOrDob, defKey.ageOrDob));
-          if (hasNonEmptyArray(defKey.icdCodes))  add(arraysMatchIgnoreOrder(sa.icdCodes, defKey.icdCodes));
-          if (hasNonEmptyArray(defKey.cptCodes))  add(arraysMatchIgnoreOrder(sa.cptCodes, defKey.cptCodes));
-          if (hasNonEmptyArray(defKey.pcsCodes))  add(arraysMatchIgnoreOrder(sa.pcsCodes, defKey.pcsCodes));
-          if (hasNonEmptyArray(defKey.hcpcsCodes))add(arraysMatchIgnoreOrder(sa.hcpcsCodes, defKey.hcpcsCodes));
-          if (hasNonEmptyText(defKey.drgValue))   add(textMatchIgnoreCase(sa.drgValue, defKey.drgValue));
-          if (hasNonEmptyArray(defKey.modifiers)) add(arraysMatchIgnoreOrder(sa.modifiers, defKey.modifiers));
-          if (hasNonEmptyText(defKey.notes))      add(textMatchIgnoreCase(sa.notes, defKey.notes));
+          if (hasNonEmptyText(defKey.patientName)) add(textMatchIgnoreCase_b(sa.patientName, defKey.patientName));
+          if (hasNonEmptyText(defKey.ageOrDob))   add(textMatchIgnoreCase_b(sa.ageOrDob, defKey.ageOrDob));
+          if (hasNonEmptyArray(defKey.icdCodes))  add(arraysMatchIgnoreOrder_b(sa.icdCodes, defKey.icdCodes));
+          if (hasNonEmptyArray(defKey.cptCodes))  add(arraysMatchIgnoreOrder_b(sa.cptCodes, defKey.cptCodes));
+          if (hasNonEmptyArray(defKey.pcsCodes))  add(arraysMatchIgnoreOrder_b(sa.pcsCodes, defKey.pcsCodes));
+          if (hasNonEmptyArray(defKey.hcpcsCodes))add(arraysMatchIgnoreOrder_b(sa.hcpcsCodes, defKey.hcpcsCodes));
+          if (hasNonEmptyText(defKey.drgValue))   add(textMatchIgnoreCase_b(sa.drgValue, defKey.drgValue));
+          if (hasNonEmptyArray(defKey.modifiers)) add(arraysMatchIgnoreOrder_b(sa.modifiers, defKey.modifiers));
+          if (hasNonEmptyText(defKey.notes))      add(textMatchIgnoreCase_b(sa.notes, defKey.notes));
+          if (hasNonEmptyText(defKey.adx))        add(textMatchIgnoreCase_b(sa.adx, defKey.adx)); // NEW
 
           subModulesSummary.push({
             subAssignmentId: sa.subAssignmentId,
@@ -1053,6 +1126,7 @@ exports.getAssignmentSubmissions = async (req, res) => {
               drgValue: sa.drgValue ?? null,
               modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
               notes: sa.notes ?? null,
+              adx: sa.adx ?? null, // NEW
               dynamicQuestions: [] // none graded in key path
             },
             answerKey: {
@@ -1065,6 +1139,7 @@ exports.getAssignmentSubmissions = async (req, res) => {
               drgValue: defKey.drgValue ?? "",
               modifiers: defKey.modifiers ?? [],
               notes: defKey.notes ?? "",
+              adx: defKey.adx ?? "", // NEW
               dynamicQuestions: []
             },
             correctCount,
@@ -1075,8 +1150,7 @@ exports.getAssignmentSubmissions = async (req, res) => {
           totalCorrect += correctCount; totalWrong += wrongCount;
           return;
         }
-
-        // ================= CASE B: PARENT-LEVEL ONLY =================
+// ================= CASE B: PARENT-LEVEL ONLY =================
         const targetDynamics = assignment.dynamicQuestions || [];
 
         let pCorrect = 0, pWrong = 0, pDenom = 0;
@@ -1096,20 +1170,22 @@ exports.getAssignmentSubmissions = async (req, res) => {
             drgValue: sa.drgValue ?? null,
             modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
             notes: sa.notes ?? null,
+            adx: sa.adx ?? null, // NEW
             dynamicQuestions: enteredDynamics
           };
         } else if (keyHasAny(parentAnswerKey)) {
           // Grade only non-empty parent key fields
           const addP = (cond) => { pDenom++; cond ? pCorrect++ : pWrong++; };
-          if (hasNonEmptyText(parentAnswerKey.patientName)) addP(textMatchIgnoreCase(sa.patientName, parentAnswerKey.patientName));
-          if (hasNonEmptyText(parentAnswerKey.ageOrDob))   addP(textMatchIgnoreCase(sa.ageOrDob, parentAnswerKey.ageOrDob));
-          if (hasNonEmptyArray(parentAnswerKey.icdCodes))  addP(arraysMatchIgnoreOrder(sa.icdCodes, parentAnswerKey.icdCodes));
-          if (hasNonEmptyArray(parentAnswerKey.cptCodes))  addP(arraysMatchIgnoreOrder(sa.cptCodes, parentAnswerKey.cptCodes));
-          if (hasNonEmptyArray(parentAnswerKey.pcsCodes))  addP(arraysMatchIgnoreOrder(sa.pcsCodes, parentAnswerKey.pcsCodes));
-          if (hasNonEmptyArray(parentAnswerKey.hcpcsCodes))addP(arraysMatchIgnoreOrder(sa.hcpcsCodes, parentAnswerKey.hcpcsCodes));
-          if (hasNonEmptyText(parentAnswerKey.drgValue))   addP(textMatchIgnoreCase(sa.drgValue, parentAnswerKey.drgValue));
-          if (hasNonEmptyArray(parentAnswerKey.modifiers)) addP(arraysMatchIgnoreOrder(sa.modifiers, parentAnswerKey.modifiers));
-          if (hasNonEmptyText(parentAnswerKey.notes))      addP(textMatchIgnoreCase(sa.notes, parentAnswerKey.notes));
+          if (hasNonEmptyText(parentAnswerKey.patientName)) addP(textMatchIgnoreCase_b(sa.patientName, parentAnswerKey.patientName));
+          if (hasNonEmptyText(parentAnswerKey.ageOrDob))   addP(textMatchIgnoreCase_b(sa.ageOrDob, parentAnswerKey.ageOrDob));
+          if (hasNonEmptyArray(parentAnswerKey.icdCodes))  addP(arraysMatchIgnoreOrder_b(sa.icdCodes, parentAnswerKey.icdCodes));
+          if (hasNonEmptyArray(parentAnswerKey.cptCodes))  addP(arraysMatchIgnoreOrder_b(sa.cptCodes, parentAnswerKey.cptCodes));
+          if (hasNonEmptyArray(parentAnswerKey.pcsCodes))  addP(arraysMatchIgnoreOrder_b(sa.pcsCodes, parentAnswerKey.pcsCodes));
+          if (hasNonEmptyArray(parentAnswerKey.hcpcsCodes))addP(arraysMatchIgnoreOrder_b(sa.hcpcsCodes, parentAnswerKey.hcpcsCodes));
+          if (hasNonEmptyText(parentAnswerKey.drgValue))   addP(textMatchIgnoreCase_b(sa.drgValue, parentAnswerKey.drgValue));
+          if (hasNonEmptyArray(parentAnswerKey.modifiers)) addP(arraysMatchIgnoreOrder_b(sa.modifiers, parentAnswerKey.modifiers));
+          if (hasNonEmptyText(parentAnswerKey.notes))      addP(textMatchIgnoreCase_b(sa.notes, parentAnswerKey.notes));
+          if (hasNonEmptyText(parentAnswerKey.adx))        addP(textMatchIgnoreCase_b(sa.adx, parentAnswerKey.adx)); // NEW
 
           parentSummary.enteredValues = {
             patientName: sa.patientName ?? null,
@@ -1121,10 +1197,10 @@ exports.getAssignmentSubmissions = async (req, res) => {
             drgValue: sa.drgValue ?? null,
             modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
             notes: sa.notes ?? null,
+            adx: sa.adx ?? null, // NEW
             dynamicQuestions: [] // none graded in key path
           };
         } else {
-          // Nothing to grade at parent level; keep 0/0 and null enteredValues if you prefer
           parentSummary.enteredValues = {
             patientName: sa.patientName ?? null,
             ageOrDob: sa.ageOrDob ?? null,
@@ -1135,6 +1211,7 @@ exports.getAssignmentSubmissions = async (req, res) => {
             drgValue: sa.drgValue ?? null,
             modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
             notes: sa.notes ?? null,
+            adx: sa.adx ?? null, // NEW
             dynamicQuestions: []
           };
         }
@@ -1169,9 +1246,13 @@ exports.getAssignmentSubmissions = async (req, res) => {
     res.json({
       assignmentId,
       moduleName: assignment.moduleName,
+      windowStart: assignment.windowStart || null,
+      windowEnd: assignment.windowEnd || null,
       results,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
+        
