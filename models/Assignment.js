@@ -21,7 +21,7 @@ const subAssignmentSchema = new mongoose.Schema({
   drgValue: String,        // DRG code/value
   modifiers: [String],     // CPT/HCPCS modifiers
   notes: String,
-  adx: String,             // <-- NEW: Adx in student input fields
+  adx: String,             // <-- Adx in student input fields
   assignmentPdf: String,
 
   // Predefined answers (per sub)
@@ -74,10 +74,9 @@ const assignmentSchema = new mongoose.Schema({
 
   assignedDate: { type: Date, default: Date.now },
 
-  /* ------------------------- OPTIONAL TIME WINDOW ------------------------- */
-  // Both optional (required: false). If provided, students must finish in this window.
-  windowStart: { type: Date }, // when the assignment becomes available
-  windowEnd: { type: Date }    // deadline / when it closes
+  /* ------------------------- TIME LIMIT (minutes) -------------------------- */
+  // Admin sets like 10, 200, etc. Applies per assignment attempt.
+  timeLimitMinutes: { type: Number, min: 1, max: 100000 } // optional; if missing => no limit
 });
 
 // Fast lookups by category and most recent
