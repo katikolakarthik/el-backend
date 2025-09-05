@@ -2,14 +2,13 @@ const Submission = require("../models/Submission");
 const Assignment = require("../models/Assignment");
 const Student = require("../models/Student");
 
-// Helper: compare strings ignoring case and extra spaces
+/* -------------------------- Comparison helpers -------------------------- */
 function textMatchIgnoreCase(a, b) {
   const strA = (a ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
   const strB = (b ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
   return strA === strB;
 }
 
-// Helper: compare arrays ignoring order, case, and extra spaces
 function arraysMatchIgnoreOrder(a = [], b = []) {
   if (!Array.isArray(a) || !Array.isArray(b)) return false;
   if (a.length !== b.length) return false;
@@ -18,8 +17,26 @@ function arraysMatchIgnoreOrder(a = [], b = []) {
   return sortedA.every((val, idx) => val === sortedB[idx]);
 }
 
-// Normalize list-like fields to arrays
 const asArray = v => Array.isArray(v) ? v : (v ? [v].flat() : []);
+
+/* -------------------- Category-driven visibility rules ------------------- */
+/** Return false for fields that must be hidden/ignored for a given category */
+function isFieldAllowedForCategory(category = "", field) {
+  const cat = (category || "").toUpperCase();
+
+  // Karthik's rules:
+  // IP-DRG: hide CPT, HCPCS, MODIFIERS
+  if (cat === "IP-DRG" && ["cptCodes", "hcpcsCodes", "modifiers"].includes(field)) return false;
+
+  // CPC: hide PCS, PATIENT NAME, AGE/DOB, DRG
+  if (cat === "CPC" && ["pcsCodes", "patientName", "ageOrDob", "drgValue"].includes(field)) return false;
+
+  // Others: all allowed
+  return true;
+}
+
+const hasNonEmptyText  = v => typeof v === "string" && v.trim() !== "";
+const hasNonEmptyArray = v => Array.isArray(v) && v.length > 0;
 
 /* ---------------------------------------------------------------------- *
  *  POST /submit - create/update a submission and auto-grade              *
@@ -127,21 +144,40 @@ exports.submitAssignment = async (req, res) => {
           });
         });
       }
-      // Otherwise, grade against predefined answer key
+      // Otherwise, grade against predefined answer key — only for fields that are:
+      // (1) allowed by the assignment category, AND (2) non-empty in the admin key.
       else if (target.answerKey) {
         const key = target.answerKey;
+        const category = assignment.category;
 
-        if (textMatchIgnoreCase(key.patientName, sub.patientName)) correctCount++; else wrongCount++;
-        if (textMatchIgnoreCase(key.ageOrDob, sub.ageOrDob)) correctCount++; else wrongCount++;
+        // helper to conditionally grade a field using its "presence" in key
+        const addGrade = (field, compareFn) => {
+          if (!isFieldAllowedForCategory(category, field)) return;          // hidden for this category → skip
+          if (field === "notes" || field === "adx" || field === "drgValue" || field === "patientName" || field === "ageOrDob") {
+            if (!hasNonEmptyText(key[field])) return;                       // empty in key → skip
+            const ok = compareFn();
+            if (ok) correctCount++; else wrongCount++;
+            return;
+          }
+          // array fields: icdCodes, cptCodes, pcsCodes, hcpcsCodes, modifiers
+          if (["icdCodes", "cptCodes", "pcsCodes", "hcpcsCodes", "modifiers"].includes(field)) {
+            if (!hasNonEmptyArray(key[field])) return;                      // empty in key → skip
+            const ok = compareFn();
+            if (ok) correctCount++; else wrongCount++;
+            return;
+          }
+        };
 
-        if (arraysMatchIgnoreOrder(key.icdCodes || [], asArray(sub.icdCodes))) correctCount++; else wrongCount++;
-        if (arraysMatchIgnoreOrder(key.cptCodes || [], asArray(sub.cptCodes))) correctCount++; else wrongCount++;
-        if (arraysMatchIgnoreOrder(key.pcsCodes || [], asArray(sub.pcsCodes))) correctCount++; else wrongCount++;       // PCS
-        if (arraysMatchIgnoreOrder(key.hcpcsCodes || [], asArray(sub.hcpcsCodes))) correctCount++; else wrongCount++;   // HCPCS
-        if (textMatchIgnoreCase(key.drgValue, sub.drgValue)) correctCount++; else wrongCount++;                         // DRG
-        if (arraysMatchIgnoreOrder(key.modifiers || [], asArray(sub.modifiers))) correctCount++; else wrongCount++;     // Modifiers
-        if (textMatchIgnoreCase(key.notes, sub.notes)) correctCount++; else wrongCount++;
-        if (textMatchIgnoreCase(key.adx, sub.adx)) correctCount++; else wrongCount++;                                   // Adx
+        addGrade("patientName", () => textMatchIgnoreCase(key.patientName, sub.patientName));
+        addGrade("ageOrDob",   () => textMatchIgnoreCase(key.ageOrDob,   sub.ageOrDob));
+        addGrade("icdCodes",   () => arraysMatchIgnoreOrder(key.icdCodes || [], asArray(sub.icdCodes)));
+        addGrade("cptCodes",   () => arraysMatchIgnoreOrder(key.cptCodes || [], asArray(sub.cptCodes)));
+        addGrade("pcsCodes",   () => arraysMatchIgnoreOrder(key.pcsCodes || [], asArray(sub.pcsCodes)));
+        addGrade("hcpcsCodes", () => arraysMatchIgnoreOrder(key.hcpcsCodes || [], asArray(sub.hcpcsCodes)));
+        addGrade("drgValue",   () => textMatchIgnoreCase(key.drgValue,   sub.drgValue));
+        addGrade("modifiers",  () => arraysMatchIgnoreOrder(key.modifiers || [], asArray(sub.modifiers)));
+        addGrade("notes",      () => textMatchIgnoreCase(key.notes,      sub.notes));
+        addGrade("adx",        () => textMatchIgnoreCase(key.adx,        sub.adx));
       }
 
       const denom = correctCount + wrongCount;
@@ -251,7 +287,7 @@ exports.getStudentAssignmentSummary = async (req, res) => {
             }
           : null,
 
-        // Predefined correct answers
+        // Predefined correct answers (raw; UI should hide per category as needed)
         answerKey: {
           patientName: subAssign.answerKey?.patientName || "",
           ageOrDob: subAssign.answerKey?.ageOrDob || "",
@@ -452,40 +488,6 @@ exports.getSubmissionDetails = async (req, res) => {
     if (assignment.answerKey || assignment.dynamicQuestions?.length > 0) {
       const parentSubmission = submission.submittedAnswers.find(
         ans => ans.subAssignmentId === null
-      );
-
-      result.assignments.push({
-        type: "parent",
-        subAssignmentId: null,
-        subModuleName: assignment.moduleName,
-        assignmentPdf: assignment.assignmentPdf,
-        submittedAnswers: parentSubmission || null,
-        correctAnswers: {
-          patientName: assignment.answerKey?.patientName || null,
-          ageOrDob: assignment.answerKey?.ageOrDob || null,
-          icdCodes: assignment.answerKey?.icdCodes || [],
-          cptCodes: assignment.answerKey?.cptCodes || [],
-          pcsCodes: assignment.answerKey?.pcsCodes || [],
-          hcpcsCodes: assignment.answerKey?.hcpcsCodes || [],
-          drgValue: assignment.answerKey?.drgValue || null,
-          modifiers: assignment.answerKey?.modifiers || [],
-          notes: assignment.answerKey?.notes || null,
-          adx: assignment.answerKey?.adx || null,
-          dynamicQuestions: assignment.dynamicQuestions?.map(q => ({
-            questionText: q.questionText,
-            type: q.type || "dynamic",
-            options: q.options || [],
-            correctAnswer: q.answer
-          })) || []
-        }
-      });
-    }
-
-    // Subs
-    for (const subAssignment of assignment.subAssignments) {
-      const subSubmission = submission.submittedAnswers.find(
-        ans => ans.subAssignmentId &&
-               ans.subAssignmentId.toString() === subAssignment._id.toString()
       );
 
       result.assignments.push({
