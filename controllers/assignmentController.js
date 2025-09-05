@@ -1,4 +1,3 @@
-// controllers/assignmentController.js
 const Assignment = require("../models/Assignment");
 const Submission = require("../models/Submission");
 const mongoose = require("mongoose");
@@ -40,7 +39,7 @@ const hasPredefinedData = (answerKey) => {
     answerKey.drgValue ||
     (answerKey.modifiers && answerKey.modifiers.length) ||
     answerKey.notes ||
-    answerKey.adx // NEW: include Adx in “has data?”
+    answerKey.adx // include Adx in “has data?”
   );
 };
 
@@ -67,10 +66,10 @@ const formatDynamicOut = (dynamicQuestions) => {
 /* ----------------------------- Controllers ------------------------------- */
 
 // Create assignment (supports parent-level or multiple sub-assignments)
-// Also supports optional windowStart/windowEnd (timer)
+// Supports optional timeLimitMinutes (per attempt)
 exports.addAssignment = async (req, res) => {
   try {
-    const { moduleName, subAssignments, category, windowStart, windowEnd } = req.body;
+    const { moduleName, subAssignments, category, timeLimitMinutes } = req.body;
     const files = req.files?.assignmentPdf || [];
 
     if (!category || !category.trim()) {
@@ -98,30 +97,21 @@ exports.addAssignment = async (req, res) => {
       drgValue: sub.answerDrgValue || null,
       modifiers: sub.answerModifiers ? parseCsv(sub.answerModifiers) : [],
       notes: sub.answerNotes || null,
-      adx: sub.answerAdx || null, // NEW: predefined Adx
+      adx: sub.answerAdx || null,
     });
 
     const assignmentData = {
       moduleName,
-      category: toUpperTrim(category), // normalize to uppercase for consistency
-      // assignedStudents is deprecated; ignore any incoming values
+      category: toUpperTrim(category),
     };
 
-    // Optional time window (timer) — both are optional
-    if (windowStart) {
-      const ws = new Date(windowStart);
-      if (!isNaN(ws.getTime())) assignmentData.windowStart = ws;
-    }
-    if (windowEnd) {
-      const we = new Date(windowEnd);
-      if (!isNaN(we.getTime())) assignmentData.windowEnd = we;
-    }
-    if (assignmentData.windowStart && assignmentData.windowEnd) {
-      if (assignmentData.windowEnd < assignmentData.windowStart) {
-        return res
-          .status(400)
-          .json({ success: false, message: "windowEnd must be >= windowStart" });
+    // Optional time limit
+    if (timeLimitMinutes !== undefined && timeLimitMinutes !== null && String(timeLimitMinutes).trim() !== "") {
+      const tl = Number(timeLimitMinutes);
+      if (!Number.isFinite(tl) || tl < 1) {
+        return res.status(400).json({ success: false, message: "timeLimitMinutes must be a positive number (minutes)" });
       }
+      assignmentData.timeLimitMinutes = Math.floor(tl);
     }
 
     if (subAssignments) {
@@ -169,7 +159,7 @@ exports.addAssignment = async (req, res) => {
     res.json({
       success: true,
       message:
-        "Assignment saved to category successfully (supports predefined, text, and MCQ dynamic questions; optional time window).",
+        "Assignment saved successfully (supports predefined, text, MCQ dynamic questions; optional timeLimitMinutes).",
       assignment,
     });
   } catch (err) {
@@ -188,8 +178,7 @@ exports.getAssignments = async (req, res) => {
       assignedStudents: a.assignedStudents,
       assignedDate: a.assignedDate,
       assignmentPdf: a.assignmentPdf || null,
-      windowStart: a.windowStart || null, // include timer info
-      windowEnd: a.windowEnd || null,
+      timeLimitMinutes: a.timeLimitMinutes ?? null, // include time limit
 
       // Merged questions (parent level)
       questions: [...formatPredefinedOut(a.answerKey), ...formatDynamicOut(a.dynamicQuestions)],
@@ -233,7 +222,7 @@ exports.getAssignmentById = async (req, res) => {
       return res.status(404).json({ error: "Assignment not found" });
     }
 
-    // Format the assignment for editing (similar to getAssignments but single item)
+    // Format the assignment for editing
     const formatted = {
       _id: assignment._id,
       moduleName: assignment.moduleName,
@@ -241,8 +230,7 @@ exports.getAssignmentById = async (req, res) => {
       assignedStudents: assignment.assignedStudents,
       assignedDate: assignment.assignedDate,
       assignmentPdf: assignment.assignmentPdf || null,
-      windowStart: assignment.windowStart || null,
-      windowEnd: assignment.windowEnd || null,
+      timeLimitMinutes: assignment.timeLimitMinutes ?? null,
 
       // Parent level data
       answerKey: assignment.answerKey || null,
@@ -311,7 +299,7 @@ exports.deleteAllAssignments = async (req, res) => {
   }
 };
 
-// Update assignment module (also supports optional timer and Adx in predefined)
+// Update assignment module (supports optional timeLimitMinutes and Adx in predefined)
 exports.updateAssignment = async (req, res) => {
   try {
     const { id } = req.params;
@@ -320,8 +308,7 @@ exports.updateAssignment = async (req, res) => {
       assignedStudents,
       subAssignments,
       category,
-      windowStart,
-      windowEnd,
+      timeLimitMinutes
     } = req.body;
     const files = req.files?.assignmentPdf || [];
 
@@ -333,7 +320,7 @@ exports.updateAssignment = async (req, res) => {
 
     const formatDynamic = (questions) =>
       (questions || []).map((q) => ({
-        _id: q._id || new mongoose.Types.ObjectId(), // Preserve existing ID or create new one
+        _id: q._id || new mongoose.Types.ObjectId(),
         questionText: q.questionText,
         options: q.options || [],
         answer: q.answer,
@@ -349,7 +336,7 @@ exports.updateAssignment = async (req, res) => {
       drgValue: sub.answerDrgValue || null,
       modifiers: sub.answerModifiers ? parseCsv(sub.answerModifiers) : [],
       notes: sub.answerNotes || null,
-      adx: sub.answerAdx || null, // NEW
+      adx: sub.answerAdx || null,
     });
 
     // Prepare update data
@@ -362,28 +349,18 @@ exports.updateAssignment = async (req, res) => {
       updateData.category = toUpperTrim(category);
     }
 
-    // Optional timer
-    if (windowStart !== undefined) {
-      if (windowStart) {
-        const ws = new Date(windowStart);
-        if (!isNaN(ws.getTime())) updateData.windowStart = ws;
+    // Optional time limit
+    if (timeLimitMinutes !== undefined) {
+      if (timeLimitMinutes === null || String(timeLimitMinutes).trim() === "") {
+        updateData.timeLimitMinutes = undefined; // unset
       } else {
-        updateData.windowStart = undefined; // unset if empty string/null
-      }
-    }
-    if (windowEnd !== undefined) {
-      if (windowEnd) {
-        const we = new Date(windowEnd);
-        if (!isNaN(we.getTime())) updateData.windowEnd = we;
-      } else {
-        updateData.windowEnd = undefined;
-      }
-    }
-    if (updateData.windowStart && updateData.windowEnd) {
-      if (updateData.windowEnd < updateData.windowStart) {
-        return res
-          .status(400)
-          .json({ success: false, message: "windowEnd must be >= windowStart" });
+        const tl = Number(timeLimitMinutes);
+        if (!Number.isFinite(tl) || tl < 1) {
+          return res
+            .status(400)
+            .json({ success: false, message: "timeLimitMinutes must be a positive number (minutes)" });
+        }
+        updateData.timeLimitMinutes = Math.floor(tl);
       }
     }
 
@@ -416,19 +393,19 @@ exports.updateAssignment = async (req, res) => {
 
           if (sub.isDynamic) {
             return {
-              _id: sub._id || new mongoose.Types.ObjectId(), // Preserve existing ID or create new one
+              _id: sub._id || new mongoose.Types.ObjectId(),
               subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
               dynamicQuestions: formatDynamic(sub.questions),
               assignmentPdf: pdfPath || sub.assignmentPdf, // Keep existing PDF if no new one
-              answerKey: null, // Clear predefined answers
+              answerKey: null,
             };
           } else {
             return {
-              _id: sub._id || new mongoose.Types.ObjectId(), // Preserve existing ID or create new one
+              _id: sub._id || new mongoose.Types.ObjectId(),
               subModuleName: sub.subModuleName || `${moduleName} - Sub ${index + 1}`,
-              assignmentPdf: pdfPath || sub.assignmentPdf, // Keep existing PDF if no new one
+              assignmentPdf: pdfPath || sub.assignmentPdf,
               answerKey: formatPredefined(sub),
-              dynamicQuestions: [], // Clear dynamic questions
+              dynamicQuestions: [],
             };
           }
         });
@@ -464,8 +441,7 @@ exports.getAssignmentsByStudentId = async (req, res) => {
         moduleName: 1,
         assignedDate: 1,
         subAssignments: 1,
-        windowStart: 1,
-        windowEnd: 1,
+        timeLimitMinutes: 1,
       }
     ).lean();
 
@@ -506,7 +482,6 @@ exports.getAssignmentsByStudentId = async (req, res) => {
   }
 };
 
-// Get full details of a parent assignment for a specific student
 exports.getAssignmentDetailsForStudent = async (req, res) => {
   try {
     const { studentId, assignmentId } = req.params;
@@ -531,8 +506,7 @@ exports.getAssignmentDetailsForStudent = async (req, res) => {
       assignedStudents: assignment.assignedStudents,
       assignedDate: assignment.assignedDate,
       assignmentPdf: assignment.assignmentPdf || null,
-      windowStart: assignment.windowStart || null,
-      windowEnd: assignment.windowEnd || null,
+      timeLimitMinutes: assignment.timeLimitMinutes ?? null,
 
       // Parent-level questions
       questions: [
@@ -567,7 +541,6 @@ exports.getAssignmentDetailsForStudent = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 
 // Get all assignments by category
 exports.getAssignmentsByCategory = async (req, res) => {
@@ -640,8 +613,7 @@ exports.getAssignmentsByCategory = async (req, res) => {
         assignedStudents: assignment.assignedStudents,
         assignedDate: assignment.assignedDate,
         assignmentPdf: assignment.assignmentPdf || null,
-        windowStart: assignment.windowStart || null,
-        windowEnd: assignment.windowEnd || null,
+        timeLimitMinutes: assignment.timeLimitMinutes ?? null,
         isCompleted: parentCompleted, // Parent completion status
 
         // Parent-level questions
@@ -713,8 +685,6 @@ exports.getAssignmentsCountByCategory = async (req, res) => {
     });
   }
 };
-
-
 
 // Get assignment statistics for a student by category
 exports.getAssignmentStatsByCategory = async (req, res) => {
@@ -840,12 +810,324 @@ exports.getAssignmentStatsByCategory = async (req, res) => {
   }
 };
 
+// ---------------------- Submissions — detailed compare --------------------
 
+function textMatchIgnoreCase_b(a, b) {
+  const strA = (a ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+  const strB = (b ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+  return strA === strB;
+}
+function arraysMatchIgnoreOrder_b(a = [], b = []) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  const A = a.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
+  const B = b.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
+  return A.every((v, i) => v === B[i]);
+}
+const hasNonEmptyText  = v => typeof v === "string" && v.trim() !== "";
+const hasNonEmptyArray = v => Array.isArray(v) && v.length > 0;
+const keyHasAny = (key = {}) =>
+  hasNonEmptyText(key.patientName) ||
+  hasNonEmptyText(key.ageOrDob) ||
+  hasNonEmptyArray(key.icdCodes) ||
+  hasNonEmptyArray(key.cptCodes) ||
+  hasNonEmptyArray(key.pcsCodes) ||
+  hasNonEmptyArray(key.hcpcsCodes) ||
+  hasNonEmptyText(key.drgValue) ||
+  hasNonEmptyArray(key.modifiers) ||
+  hasNonEmptyText(key.notes) ||
+  hasNonEmptyText(key.adx); // include Adx
 
+// utility: grade dynamic by questionText (ignores blanks)
+function gradeDynamic(targetDynamics = [], submittedDynamics = []) {
+  let correct = 0, wrong = 0, denom = 0;
+  const out = [];
+  for (const q of targetDynamics) {
+    const valid = hasNonEmptyText(q?.questionText) && hasNonEmptyText(q?.answer);
+    if (!valid) continue; // skip blank key items
+    denom++;
+    const match = submittedDynamics.find(sq =>
+      textMatchIgnoreCase_b(sq?.questionText, q.questionText)
+    );
+    const submittedAnswer = match?.submittedAnswer ?? "";
+    const isCorrect = textMatchIgnoreCase_b(q.answer, submittedAnswer);
+    if (isCorrect) correct++; else wrong++;
+    out.push({
+      questionText: q.questionText,
+      type: q.type || "dynamic",
+      options: q.options || [],
+      correctAnswer: q.answer,
+      submittedAnswer,
+      isCorrect,
+      _id: match?._id
+    });
+  }
+  return { correct, wrong, denom, enteredDynamics: out };
+}
 
+exports.getAssignmentSubmissions = async (req, res) => {
+  try {
+    const { assignmentId } = req.params;
 
+    const assignment = await Assignment.findById(assignmentId).lean();
+    if (!assignment) return res.status(404).json({ error: "Assignment not found" });
 
+    const getSubModuleName = (defSub) =>
+      defSub?.subModuleName || defSub?.name || defSub?.title || "";
 
+    const parentAnswerKey = assignment?.answerKey || {};
+    const submissions = await Submission.find({ assignmentId })
+      .populate("studentId", "name courseName")
+      .lean();
+
+    const results = submissions.map((sub) => {
+      let totalCorrect = 0;
+      let totalWrong = 0;
+
+      // Start with only answerKey copy; we'll fill enteredValues if parent submission exists
+      const parentSummary = {
+        enteredValues: null,
+        answerKey: {
+          patientName: parentAnswerKey.patientName ?? "",
+          ageOrDob: parentAnswerKey.ageOrDob ?? "",
+          icdCodes: parentAnswerKey.icdCodes ?? [],
+          cptCodes: parentAnswerKey.cptCodes ?? [],
+          pcsCodes: parentAnswerKey.pcsCodes ?? [],
+          hcpcsCodes: parentAnswerKey.hcpcsCodes ?? [],
+          drgValue: parentAnswerKey.drgValue ?? "",
+          modifiers: parentAnswerKey.modifiers ?? [],
+          notes: parentAnswerKey.notes ?? "",
+          adx: parentAnswerKey.adx ?? "", // Adx
+          dynamicQuestions: (assignment.dynamicQuestions ?? []).map(q => ({
+            questionText: q.questionText,
+            options: q.options ?? [],
+            answer: q.answer,
+            _id: q._id
+          }))
+        },
+        correctCount: 0,
+        wrongCount: 0,
+        progressPercent: 0
+      };
+
+      const subModulesSummary = [];
+
+      (sub.submittedAnswers || []).forEach((sa) => {
+        const defSub = (assignment.subAssignments || []).find(
+          (s) => sa.subAssignmentId && s._id.toString() === sa.subAssignmentId.toString()
+        );
+        // ================= CASE A: TRUE SUB-ASSIGNMENT =================
+        if (defSub) {
+          const defKey = defSub.answerKey || {};
+          const targetDynamics = defSub.dynamicQuestions || [];
+
+          let correctCount = 0;
+          let wrongCount = 0;
+          let denom = 0;
+
+          // Prefer dynamic when present
+          if (Array.isArray(targetDynamics) && targetDynamics.length > 0) {
+            const { correct, wrong, denom: d, enteredDynamics } =
+              gradeDynamic(targetDynamics, sa.dynamicQuestions || []);
+            correctCount += correct; wrongCount += wrong; denom += d;
+
+            // build summaries
+            subModulesSummary.push({
+              subAssignmentId: sa.subAssignmentId,
+              subModuleName: getSubModuleName(defSub),
+              enteredValues: {
+                patientName: sa.patientName ?? null,
+                ageOrDob: sa.ageOrDob ?? null,
+                icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
+                cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
+                pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
+                hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
+                drgValue: sa.drgValue ?? null,
+                modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
+                notes: sa.notes ?? null,
+                adx: sa.adx ?? null, // include student-entered Adx
+                dynamicQuestions: enteredDynamics
+              },
+              answerKey: {
+                patientName: defKey.patientName ?? "",
+                ageOrDob: defKey.ageOrDob ?? "",
+                icdCodes: defKey.icdCodes ?? [],
+                cptCodes: defKey.cptCodes ?? [],
+                pcsCodes: defKey.pcsCodes ?? [],
+                hcpcsCodes: defKey.hcpcsCodes ?? [],
+                drgValue: defKey.drgValue ?? "",
+                modifiers: defKey.modifiers ?? [],
+                notes: defKey.notes ?? "",
+                adx: defKey.adx ?? "", // Adx
+                dynamicQuestions: targetDynamics.map(q => ({
+                  questionText: q.questionText,
+                  options: q.options || [],
+                  answer: q.answer,
+                  _id: q._id
+                }))
+              },
+              correctCount,
+              wrongCount,
+              progressPercent: denom > 0 ? Math.round((correctCount / denom) * 100) : 0
+            });
+
+            totalCorrect += correctCount; totalWrong += wrongCount;
+            return; // done with CASE A (dynamic path)
+          }
+
+          // Otherwise grade answerKey BUT ONLY non-empty keys
+          const add = (cond) => { denom++; cond ? correctCount++ : wrongCount++; };
+          if (hasNonEmptyText(defKey.patientName)) add(textMatchIgnoreCase_b(sa.patientName, defKey.patientName));
+          if (hasNonEmptyText(defKey.ageOrDob))   add(textMatchIgnoreCase_b(sa.ageOrDob, defKey.ageOrDob));
+          if (hasNonEmptyArray(defKey.icdCodes))  add(arraysMatchIgnoreOrder_b(sa.icdCodes, defKey.icdCodes));
+          if (hasNonEmptyArray(defKey.cptCodes))  add(arraysMatchIgnoreOrder_b(sa.cptCodes, defKey.cptCodes));
+          if (hasNonEmptyArray(defKey.pcsCodes))  add(arraysMatchIgnoreOrder_b(sa.pcsCodes, defKey.pcsCodes));
+          if (hasNonEmptyArray(defKey.hcpcsCodes))add(arraysMatchIgnoreOrder_b(sa.hcpcsCodes, defKey.hcpcsCodes));
+          if (hasNonEmptyText(defKey.drgValue))   add(textMatchIgnoreCase_b(sa.drgValue, defKey.drgValue));
+          if (hasNonEmptyArray(defKey.modifiers)) add(arraysMatchIgnoreOrder_b(sa.modifiers, defKey.modifiers));
+          if (hasNonEmptyText(defKey.notes))      add(textMatchIgnoreCase_b(sa.notes, defKey.notes));
+          if (hasNonEmptyText(defKey.adx))        add(textMatchIgnoreCase_b(sa.adx, defKey.adx)); // Adx
+
+          subModulesSummary.push({
+            subAssignmentId: sa.subAssignmentId,
+            subModuleName: getSubModuleName(defSub),
+            enteredValues: {
+              patientName: sa.patientName ?? null,
+              ageOrDob: sa.ageOrDob ?? null,
+              icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
+              cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
+              pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
+              hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
+              drgValue: sa.drgValue ?? null,
+              modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
+              notes: sa.notes ?? null,
+              adx: sa.adx ?? null,
+              dynamicQuestions: [] // none graded in key path
+            },
+            answerKey: {
+              patientName: defKey.patientName ?? "",
+              ageOrDob: defKey.ageOrDob ?? "",
+              icdCodes: defKey.icdCodes ?? [],
+              cptCodes: defKey.cptCodes ?? [],
+              pcsCodes: defKey.pcsCodes ?? [],
+              hcpcsCodes: defKey.hcpcsCodes ?? [],
+              drgValue: defKey.drgValue ?? "",
+              modifiers: defKey.modifiers ?? [],
+              notes: defKey.notes ?? "",
+              adx: defKey.adx ?? "",
+              dynamicQuestions: []
+            },
+            correctCount,
+            wrongCount,
+            progressPercent: denom > 0 ? Math.round((correctCount / denom) * 100) : 0
+          });
+
+          totalCorrect += correctCount; totalWrong += wrongCount;
+          return;
+        }
+// ================= CASE B: PARENT-LEVEL ONLY =================
+        const targetDynamics = assignment.dynamicQuestions || [];
+
+        let pCorrect = 0, pWrong = 0, pDenom = 0;
+
+        if (Array.isArray(targetDynamics) && targetDynamics.length > 0) {
+          const { correct, wrong, denom, enteredDynamics } =
+            gradeDynamic(targetDynamics, sa.dynamicQuestions || []);
+          pCorrect += correct; pWrong += wrong; pDenom += denom;
+
+          parentSummary.enteredValues = {
+            patientName: sa.patientName ?? null,
+            ageOrDob: sa.ageOrDob ?? null,
+            icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
+            cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
+            pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
+            hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
+            drgValue: sa.drgValue ?? null,
+            modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
+            notes: sa.notes ?? null,
+            adx: sa.adx ?? null,
+            dynamicQuestions: enteredDynamics
+          };
+        } else if (keyHasAny(parentAnswerKey)) {
+          // Grade only non-empty parent key fields
+          const addP = (cond) => { pDenom++; cond ? pCorrect++ : pWrong++; };
+          if (hasNonEmptyText(parentAnswerKey.patientName)) addP(textMatchIgnoreCase_b(sa.patientName, parentAnswerKey.patientName));
+          if (hasNonEmptyText(parentAnswerKey.ageOrDob))   addP(textMatchIgnoreCase_b(sa.ageOrDob, parentAnswerKey.ageOrDob));
+          if (hasNonEmptyArray(parentAnswerKey.icdCodes))  addP(arraysMatchIgnoreOrder_b(sa.icdCodes, parentAnswerKey.icdCodes));
+          if (hasNonEmptyArray(parentAnswerKey.cptCodes))  addP(arraysMatchIgnoreOrder_b(sa.cptCodes, parentAnswerKey.cptCodes));
+          if (hasNonEmptyArray(parentAnswerKey.pcsCodes))  addP(arraysMatchIgnoreOrder_b(sa.pcsCodes, parentAnswerKey.pcsCodes));
+          if (hasNonEmptyArray(parentAnswerKey.hcpcsCodes))addP(arraysMatchIgnoreOrder_b(sa.hcpcsCodes, parentAnswerKey.hcpcsCodes));
+          if (hasNonEmptyText(parentAnswerKey.drgValue))   addP(textMatchIgnoreCase_b(sa.drgValue, parentAnswerKey.drgValue));
+          if (hasNonEmptyArray(parentAnswerKey.modifiers)) addP(arraysMatchIgnoreOrder_b(sa.modifiers, parentAnswerKey.modifiers));
+          if (hasNonEmptyText(parentAnswerKey.notes))      addP(textMatchIgnoreCase_b(sa.notes, parentAnswerKey.notes));
+          if (hasNonEmptyText(parentAnswerKey.adx))        addP(textMatchIgnoreCase_b(sa.adx, parentAnswerKey.adx)); // Adx
+
+          parentSummary.enteredValues = {
+            patientName: sa.patientName ?? null,
+            ageOrDob: sa.ageOrDob ?? null,
+            icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
+            cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
+            pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
+            hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
+            drgValue: sa.drgValue ?? null,
+            modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
+            notes: sa.notes ?? null,
+            adx: sa.adx ?? null,
+            dynamicQuestions: [] // none graded in key path
+          };
+        } else {
+          parentSummary.enteredValues = {
+            patientName: sa.patientName ?? null,
+            ageOrDob: sa.ageOrDob ?? null,
+            icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
+            cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
+            pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
+            hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
+            drgValue: sa.drgValue ?? null,
+            modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
+            notes: sa.notes ?? null,
+            adx: sa.adx ?? null,
+            dynamicQuestions: []
+          };
+        }
+
+        parentSummary.correctCount = pCorrect;
+        parentSummary.wrongCount = pWrong;
+        parentSummary.progressPercent = pDenom > 0 ? Math.round((pCorrect / pDenom) * 100) : 0;
+
+        totalCorrect += pCorrect;
+        totalWrong += pWrong;
+      });
+
+      const overallProgress =
+        totalCorrect + totalWrong > 0
+          ? Math.round((totalCorrect / (totalCorrect + totalWrong)) * 100)
+          : 0;
+
+      return {
+        studentId: sub.studentId?._id || null,
+        studentName: sub.studentId?.name || null,
+        courseName: sub.studentId?.courseName || null,
+        assignmentId: sub.assignmentId,
+        totalCorrect,
+        totalWrong,
+        overallProgress,
+        parentSummary,
+        subModulesSummary,
+        submissionDate: sub.submissionDate || null,
+      };
+    });
+
+    res.json({
+      assignmentId,
+      moduleName: assignment.moduleName,
+      timeLimitMinutes: assignment.timeLimitMinutes ?? null,
+      results,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 
 // Alternative: Get detailed statistics including assignment lists
 exports.getDetailedAssignmentStats = async (req, res) => {
@@ -889,15 +1171,13 @@ exports.getDetailedAssignmentStats = async (req, res) => {
           assignment: assignment.moduleName,
           score: submission.overallProgress || 0,
           submissionDate: submission.submissionDate,
-          windowStart: assignment.windowStart || null,
-          windowEnd: assignment.windowEnd || null,
+          timeLimitMinutes: assignment.timeLimitMinutes ?? null,
         });
       } else {
         pendingAssignments.push({
           assignment: assignment.moduleName,
           assignedDate: assignment.assignedDate,
-          windowStart: assignment.windowStart || null,
-          windowEnd: assignment.windowEnd || null,
+          timeLimitMinutes: assignment.timeLimitMinutes ?? null,
         });
       }
     });
@@ -930,329 +1210,3 @@ exports.getDetailedAssignmentStats = async (req, res) => {
     });
   }
 };
-
-/* ---------------------- Submissions — detailed compare -------------------- */
-
-
-// ---- helpers reused here (same as in your controller) ----
-function textMatchIgnoreCase_b(a, b) {
-  const strA = (a ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
-  const strB = (b ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
-  return strA === strB;
-}
-function arraysMatchIgnoreOrder_b(a = [], b = []) {
-  if (!Array.isArray(a) || !Array.isArray(b)) return false;
-  if (a.length !== b.length) return false;
-  const A = a.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
-  const B = b.map(v => (v ?? "").toString().trim().toLowerCase()).sort();
-  return A.every((v, i) => v === B[i]);
-}
-const hasNonEmptyText  = v => typeof v === "string" && v.trim() !== "";
-const hasNonEmptyArray = v => Array.isArray(v) && v.length > 0;
-const keyHasAny = (key = {}) =>
-  hasNonEmptyText(key.patientName) ||
-  hasNonEmptyText(key.ageOrDob) ||
-  hasNonEmptyArray(key.icdCodes) ||
-  hasNonEmptyArray(key.cptCodes) ||
-  hasNonEmptyArray(key.pcsCodes) ||
-  hasNonEmptyArray(key.hcpcsCodes) ||
-  hasNonEmptyText(key.drgValue) ||
-  hasNonEmptyArray(key.modifiers) ||
-  hasNonEmptyText(key.notes) ||
-  hasNonEmptyText(key.adx); // NEW: consider Adx
-
-// utility: grade dynamic by questionText (ignores blanks)
-function gradeDynamic(targetDynamics = [], submittedDynamics = []) {
-  let correct = 0, wrong = 0, denom = 0;
-  const out = [];
-  for (const q of targetDynamics) {
-    const valid = hasNonEmptyText(q?.questionText) && hasNonEmptyText(q?.answer);
-    if (!valid) continue; // skip blank key items
-    denom++;
-    const match = submittedDynamics.find(sq =>
-      textMatchIgnoreCase_b(sq?.questionText, q.questionText)
-    );
-    const submittedAnswer = match?.submittedAnswer ?? "";
-    const isCorrect = textMatchIgnoreCase_b(q.answer, submittedAnswer);
-    if (isCorrect) correct++; else wrong++;
-    out.push({
-      questionText: q.questionText,
-      type: q.type || "dynamic",
-      options: q.options || [],
-      correctAnswer: q.answer,
-      submittedAnswer,
-      isCorrect,
-      _id: match?._id
-    });
-  }
-  return { correct, wrong, denom, enteredDynamics: out };
-}
-
-
-exports.getAssignmentSubmissions = async (req, res) => {
-  try {
-    const { assignmentId } = req.params;
-
-    const assignment = await Assignment.findById(assignmentId).lean();
-    if (!assignment) return res.status(404).json({ error: "Assignment not found" });
-
-    const getSubModuleName = (defSub) =>
-      defSub?.subModuleName || defSub?.name || defSub?.title || "";
-
-    const parentAnswerKey = assignment?.answerKey || {};
-    const submissions = await Submission.find({ assignmentId })
-      .populate("studentId", "name courseName")
-      .lean();
-
-    const results = submissions.map((sub) => {
-      let totalCorrect = 0;
-      let totalWrong = 0;
-
-      // Start with only answerKey copy; we'll fill enteredValues if parent submission exists
-      const parentSummary = {
-        enteredValues: null,
-        answerKey: {
-          patientName: parentAnswerKey.patientName ?? "",
-          ageOrDob: parentAnswerKey.ageOrDob ?? "",
-          icdCodes: parentAnswerKey.icdCodes ?? [],
-          cptCodes: parentAnswerKey.cptCodes ?? [],
-          pcsCodes: parentAnswerKey.pcsCodes ?? [],
-          hcpcsCodes: parentAnswerKey.hcpcsCodes ?? [],
-          drgValue: parentAnswerKey.drgValue ?? "",
-          modifiers: parentAnswerKey.modifiers ?? [],
-          notes: parentAnswerKey.notes ?? "",
-          adx: parentAnswerKey.adx ?? "", // NEW
-          dynamicQuestions: (assignment.dynamicQuestions ?? []).map(q => ({
-            questionText: q.questionText,
-            options: q.options ?? [],
-            answer: q.answer,
-            _id: q._id
-          }))
-        },
-        correctCount: 0,
-        wrongCount: 0,
-        progressPercent: 0
-      };
-
-      const subModulesSummary = [];
-
-      (sub.submittedAnswers || []).forEach((sa) => {
-        const defSub = (assignment.subAssignments || []).find(
-          (s) => sa.subAssignmentId && s._id.toString() === sa.subAssignmentId.toString()
-        );
-
-        // ================= CASE A: TRUE SUB-ASSIGNMENT =================
-        if (defSub) {
-          const defKey = defSub.answerKey || {};
-          const targetDynamics = defSub.dynamicQuestions || [];
-
-          let correctCount = 0;
-          let wrongCount = 0;
-          let denom = 0;
-
-          // Prefer dynamic when present
-          if (Array.isArray(targetDynamics) && targetDynamics.length > 0) {
-            const { correct, wrong, denom: d, enteredDynamics } =
-              gradeDynamic(targetDynamics, sa.dynamicQuestions || []);
-            correctCount += correct; wrongCount += wrong; denom += d;
-
-            // build summaries
-            subModulesSummary.push({
-              subAssignmentId: sa.subAssignmentId,
-              subModuleName: getSubModuleName(defSub),
-              enteredValues: {
-                patientName: sa.patientName ?? null,
-                ageOrDob: sa.ageOrDob ?? null,
-                icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
-                cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
-                pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
-                hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
-                drgValue: sa.drgValue ?? null,
-                modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
-                notes: sa.notes ?? null,
-                adx: sa.adx ?? null, // NEW: include student-entered Adx
-                dynamicQuestions: enteredDynamics
-              },
-              answerKey: {
-                patientName: defKey.patientName ?? "",
-                ageOrDob: defKey.ageOrDob ?? "",
-                icdCodes: defKey.icdCodes ?? [],
-                cptCodes: defKey.cptCodes ?? [],
-                pcsCodes: defKey.pcsCodes ?? [],
-                hcpcsCodes: defKey.hcpcsCodes ?? [],
-                drgValue: defKey.drgValue ?? "",
-                modifiers: defKey.modifiers ?? [],
-                notes: defKey.notes ?? "",
-                adx: defKey.adx ?? "", // NEW
-                dynamicQuestions: targetDynamics.map(q => ({
-                  questionText: q.questionText,
-                  options: q.options || [],
-                  answer: q.answer,
-                  _id: q._id
-                }))
-              },
-              correctCount,
-              wrongCount,
-              progressPercent: denom > 0 ? Math.round((correctCount / denom) * 100) : 0
-            });
-
-            totalCorrect += correctCount; totalWrong += wrongCount;
-            return; // done with CASE A (dynamic path)
-          }
-
-          // Otherwise grade answerKey BUT ONLY non-empty keys
-          const add = (cond) => { denom++; cond ? correctCount++ : wrongCount++; };
-          if (hasNonEmptyText(defKey.patientName)) add(textMatchIgnoreCase_b(sa.patientName, defKey.patientName));
-          if (hasNonEmptyText(defKey.ageOrDob))   add(textMatchIgnoreCase_b(sa.ageOrDob, defKey.ageOrDob));
-          if (hasNonEmptyArray(defKey.icdCodes))  add(arraysMatchIgnoreOrder_b(sa.icdCodes, defKey.icdCodes));
-          if (hasNonEmptyArray(defKey.cptCodes))  add(arraysMatchIgnoreOrder_b(sa.cptCodes, defKey.cptCodes));
-          if (hasNonEmptyArray(defKey.pcsCodes))  add(arraysMatchIgnoreOrder_b(sa.pcsCodes, defKey.pcsCodes));
-          if (hasNonEmptyArray(defKey.hcpcsCodes))add(arraysMatchIgnoreOrder_b(sa.hcpcsCodes, defKey.hcpcsCodes));
-          if (hasNonEmptyText(defKey.drgValue))   add(textMatchIgnoreCase_b(sa.drgValue, defKey.drgValue));
-          if (hasNonEmptyArray(defKey.modifiers)) add(arraysMatchIgnoreOrder_b(sa.modifiers, defKey.modifiers));
-          if (hasNonEmptyText(defKey.notes))      add(textMatchIgnoreCase_b(sa.notes, defKey.notes));
-          if (hasNonEmptyText(defKey.adx))        add(textMatchIgnoreCase_b(sa.adx, defKey.adx)); // NEW
-
-          subModulesSummary.push({
-            subAssignmentId: sa.subAssignmentId,
-            subModuleName: getSubModuleName(defSub),
-            enteredValues: {
-              patientName: sa.patientName ?? null,
-              ageOrDob: sa.ageOrDob ?? null,
-              icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
-              cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
-              pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
-              hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
-              drgValue: sa.drgValue ?? null,
-              modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
-              notes: sa.notes ?? null,
-              adx: sa.adx ?? null, // NEW
-              dynamicQuestions: [] // none graded in key path
-            },
-            answerKey: {
-              patientName: defKey.patientName ?? "",
-              ageOrDob: defKey.ageOrDob ?? "",
-              icdCodes: defKey.icdCodes ?? [],
-              cptCodes: defKey.cptCodes ?? [],
-              pcsCodes: defKey.pcsCodes ?? [],
-              hcpcsCodes: defKey.hcpcsCodes ?? [],
-              drgValue: defKey.drgValue ?? "",
-              modifiers: defKey.modifiers ?? [],
-              notes: defKey.notes ?? "",
-              adx: defKey.adx ?? "", // NEW
-              dynamicQuestions: []
-            },
-            correctCount,
-            wrongCount,
-            progressPercent: denom > 0 ? Math.round((correctCount / denom) * 100) : 0
-          });
-
-          totalCorrect += correctCount; totalWrong += wrongCount;
-          return;
-        }
-// ================= CASE B: PARENT-LEVEL ONLY =================
-        const targetDynamics = assignment.dynamicQuestions || [];
-
-        let pCorrect = 0, pWrong = 0, pDenom = 0;
-
-        if (Array.isArray(targetDynamics) && targetDynamics.length > 0) {
-          const { correct, wrong, denom, enteredDynamics } =
-            gradeDynamic(targetDynamics, sa.dynamicQuestions || []);
-          pCorrect += correct; pWrong += wrong; pDenom += denom;
-
-          parentSummary.enteredValues = {
-            patientName: sa.patientName ?? null,
-            ageOrDob: sa.ageOrDob ?? null,
-            icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
-            cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
-            pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
-            hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
-            drgValue: sa.drgValue ?? null,
-            modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
-            notes: sa.notes ?? null,
-            adx: sa.adx ?? null, // NEW
-            dynamicQuestions: enteredDynamics
-          };
-        } else if (keyHasAny(parentAnswerKey)) {
-          // Grade only non-empty parent key fields
-          const addP = (cond) => { pDenom++; cond ? pCorrect++ : pWrong++; };
-          if (hasNonEmptyText(parentAnswerKey.patientName)) addP(textMatchIgnoreCase_b(sa.patientName, parentAnswerKey.patientName));
-          if (hasNonEmptyText(parentAnswerKey.ageOrDob))   addP(textMatchIgnoreCase_b(sa.ageOrDob, parentAnswerKey.ageOrDob));
-          if (hasNonEmptyArray(parentAnswerKey.icdCodes))  addP(arraysMatchIgnoreOrder_b(sa.icdCodes, parentAnswerKey.icdCodes));
-          if (hasNonEmptyArray(parentAnswerKey.cptCodes))  addP(arraysMatchIgnoreOrder_b(sa.cptCodes, parentAnswerKey.cptCodes));
-          if (hasNonEmptyArray(parentAnswerKey.pcsCodes))  addP(arraysMatchIgnoreOrder_b(sa.pcsCodes, parentAnswerKey.pcsCodes));
-          if (hasNonEmptyArray(parentAnswerKey.hcpcsCodes))addP(arraysMatchIgnoreOrder_b(sa.hcpcsCodes, parentAnswerKey.hcpcsCodes));
-          if (hasNonEmptyText(parentAnswerKey.drgValue))   addP(textMatchIgnoreCase_b(sa.drgValue, parentAnswerKey.drgValue));
-          if (hasNonEmptyArray(parentAnswerKey.modifiers)) addP(arraysMatchIgnoreOrder_b(sa.modifiers, parentAnswerKey.modifiers));
-          if (hasNonEmptyText(parentAnswerKey.notes))      addP(textMatchIgnoreCase_b(sa.notes, parentAnswerKey.notes));
-          if (hasNonEmptyText(parentAnswerKey.adx))        addP(textMatchIgnoreCase_b(sa.adx, parentAnswerKey.adx)); // NEW
-
-          parentSummary.enteredValues = {
-            patientName: sa.patientName ?? null,
-            ageOrDob: sa.ageOrDob ?? null,
-            icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
-            cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
-            pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
-            hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
-            drgValue: sa.drgValue ?? null,
-            modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
-            notes: sa.notes ?? null,
-            adx: sa.adx ?? null, // NEW
-            dynamicQuestions: [] // none graded in key path
-          };
-        } else {
-          parentSummary.enteredValues = {
-            patientName: sa.patientName ?? null,
-            ageOrDob: sa.ageOrDob ?? null,
-            icdCodes: Array.isArray(sa.icdCodes) ? sa.icdCodes : [],
-            cptCodes: Array.isArray(sa.cptCodes) ? sa.cptCodes : [],
-            pcsCodes: Array.isArray(sa.pcsCodes) ? sa.pcsCodes : [],
-            hcpcsCodes: Array.isArray(sa.hcpcsCodes) ? sa.hcpcsCodes : [],
-            drgValue: sa.drgValue ?? null,
-            modifiers: Array.isArray(sa.modifiers) ? sa.modifiers : [],
-            notes: sa.notes ?? null,
-            adx: sa.adx ?? null, // NEW
-            dynamicQuestions: []
-          };
-        }
-
-        parentSummary.correctCount = pCorrect;
-        parentSummary.wrongCount = pWrong;
-        parentSummary.progressPercent = pDenom > 0 ? Math.round((pCorrect / pDenom) * 100) : 0;
-
-        totalCorrect += pCorrect;
-        totalWrong += pWrong;
-      });
-
-      const overallProgress =
-        totalCorrect + totalWrong > 0
-          ? Math.round((totalCorrect / (totalCorrect + totalWrong)) * 100)
-          : 0;
-
-      return {
-        studentId: sub.studentId?._id || null,
-        studentName: sub.studentId?.name || null,
-        courseName: sub.studentId?.courseName || null,
-        assignmentId: sub.assignmentId,
-        totalCorrect,
-        totalWrong,
-        overallProgress,
-        parentSummary,
-        subModulesSummary,
-        submissionDate: sub.submissionDate || null,
-      };
-    });
-
-    res.json({
-      assignmentId,
-      moduleName: assignment.moduleName,
-      windowStart: assignment.windowStart || null,
-      windowEnd: assignment.windowEnd || null,
-      results,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-        
