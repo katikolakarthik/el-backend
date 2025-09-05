@@ -23,38 +23,32 @@ const asArray = v => Array.isArray(v) ? v : (v ? [v].flat() : []);
 
 /* ---------------------------------------------------------------------- *
  *  POST /submit - create/update a submission and auto-grade              *
- *  Enforces optional assignment windowStart/windowEnd (timer)            *
+ *  Enforces optional assignment timeLimitMinutes (per attempt)           *
  * ---------------------------------------------------------------------- */
 exports.submitAssignment = async (req, res) => {
   try {
     const { studentId, assignmentId, submittedAnswers } = req.body;
 
-    // Get student to retrieve expiry date
+    if (!studentId || !assignmentId || !Array.isArray(submittedAnswers)) {
+      return res.status(400).json({ success: false, message: "Missing studentId, assignmentId or submittedAnswers" });
+    }
+
+    // Get student (for TTL expiry)
     const student = await Student.findById(studentId);
     if (!student) return res.status(404).json({ error: "Student not found" });
 
     const assignment = await Assignment.findById(assignmentId);
     if (!assignment) return res.status(404).json({ error: "Assignment not found" });
 
-    // ---- TIMER ENFORCEMENT (optional) ----
     const now = new Date();
-    if (assignment.windowStart && now < new Date(assignment.windowStart)) {
-      return res.status(403).json({
-        success: false,
-        message: "Submissions are not open yet for this assignment."
-      });
-    }
-    if (assignment.windowEnd && now > new Date(assignment.windowEnd)) {
-      return res.status(403).json({
-        success: false,
-        message: "The submission window for this assignment has closed."
-      });
-    }
-    // --------------------------------------
 
-    // Find or create submission record
+    // Find or create submission (unique by student+assignment)
     let submission = await Submission.findOne({ studentId, assignmentId });
+
+    // --- TIMER LOGIC (timeLimitMinutes) ---
+    const limitMin = Number(assignment.timeLimitMinutes ?? 0);
     if (!submission) {
+      // First attempt → stamp startedAt and mustSubmitBy if limit is set
       submission = new Submission({
         studentId,
         assignmentId,
@@ -62,18 +56,36 @@ exports.submitAssignment = async (req, res) => {
         totalCorrect: 0,
         totalWrong: 0,
         overallProgress: 0,
-        expiresAt: student.expiryDate
+        expiresAt: student.expiryDate || undefined
       });
+      if (Number.isFinite(limitMin) && limitMin > 0) {
+        submission.startedAt = now;
+        submission.mustSubmitBy = new Date(now.getTime() + limitMin * 60 * 1000);
+      }
+    } else {
+      // Existing attempt → if a limit exists, ensure we're still within time
+      if (submission.mustSubmitBy && now > new Date(submission.mustSubmitBy)) {
+        return res.status(403).json({
+          success: false,
+          message: "Time limit exceeded for this assignment."
+        });
+      }
+      // If assignment got a limit later but this attempt has no timer yet (rare), start it now.
+      if (!submission.startedAt && Number.isFinite(limitMin) && limitMin > 0) {
+        submission.startedAt = now;
+        submission.mustSubmitBy = new Date(now.getTime() + limitMin * 60 * 1000);
+      }
     }
+    // --------------------------------------
 
-    // Track any duplicate attempts
+    // Track any duplicate attempts for sub-sections/parent
     const alreadySubmittedSubs = [];
 
     // Process each submitted submodule (or parent-level)
     for (const sub of submittedAnswers) {
       let correctCount = 0, wrongCount = 0;
 
-      // Resolve target (sub-assignment or parent)
+      // Resolve grading target (sub-assignment or parent)
       let target;
       if (sub.subAssignmentId) {
         target = assignment.subAssignments.id(sub.subAssignmentId);
@@ -82,7 +94,7 @@ exports.submitAssignment = async (req, res) => {
       }
       if (!target) continue;
 
-      // Block overwrite if this sub was already submitted
+      // Disallow resubmitting same sub or parent
       const alreadySubmitted = submission.submittedAnswers.find(
         ans => String(ans.subAssignmentId || null) === String(sub.subAssignmentId || null)
       );
@@ -129,7 +141,7 @@ exports.submitAssignment = async (req, res) => {
         if (textMatchIgnoreCase(key.drgValue, sub.drgValue)) correctCount++; else wrongCount++;                         // DRG
         if (arraysMatchIgnoreOrder(key.modifiers || [], asArray(sub.modifiers))) correctCount++; else wrongCount++;     // Modifiers
         if (textMatchIgnoreCase(key.notes, sub.notes)) correctCount++; else wrongCount++;
-        if (textMatchIgnoreCase(key.adx, sub.adx)) correctCount++; else wrongCount++;                                   // NEW: Adx
+        if (textMatchIgnoreCase(key.adx, sub.adx)) correctCount++; else wrongCount++;                                   // Adx
       }
 
       const denom = correctCount + wrongCount;
@@ -148,7 +160,7 @@ exports.submitAssignment = async (req, res) => {
         drgValue: sub.drgValue || null,
         modifiers: asArray(sub.modifiers),
         notes: sub.notes || null,
-        adx: sub.adx || null, // NEW
+        adx: sub.adx || null,
 
         dynamicQuestions: gradedDynamicQuestions,
         correctCount,
@@ -172,6 +184,9 @@ exports.submitAssignment = async (req, res) => {
     submission.totalWrong = submission.submittedAnswers.reduce((sum, a) => sum + (a.wrongCount || 0), 0);
     const totalDenom = submission.totalCorrect + submission.totalWrong;
     submission.overallProgress = totalDenom > 0 ? Math.round((submission.totalCorrect / totalDenom) * 100) : 0;
+
+    // Update submissionDate to last activity
+    submission.submissionDate = now;
 
     await submission.save();
 
@@ -231,7 +246,7 @@ exports.getStudentAssignmentSummary = async (req, res) => {
               drgValue: submittedAnswer.drgValue,
               modifiers: submittedAnswer.modifiers,
               notes: submittedAnswer.notes,
-              adx: submittedAnswer.adx, // NEW
+              adx: submittedAnswer.adx,
               dynamicQuestions: submittedAnswer.dynamicQuestions || []
             }
           : null,
@@ -247,7 +262,7 @@ exports.getStudentAssignmentSummary = async (req, res) => {
           drgValue: subAssign.answerKey?.drgValue || "",
           modifiers: subAssign.answerKey?.modifiers || [],
           notes: subAssign.answerKey?.notes || "",
-          adx: subAssign.answerKey?.adx || "", // NEW
+          adx: subAssign.answerKey?.adx || "",
           dynamicQuestions: subAssign.dynamicQuestions || []
         },
 
@@ -273,7 +288,7 @@ exports.getStudentAssignmentSummary = async (req, res) => {
               drgValue: submittedParent.drgValue,
               modifiers: submittedParent.modifiers,
               notes: submittedParent.notes,
-              adx: submittedParent.adx, // NEW
+              adx: submittedParent.adx,
               dynamicQuestions: submittedParent.dynamicQuestions || []
             }
           : null,
@@ -288,7 +303,7 @@ exports.getStudentAssignmentSummary = async (req, res) => {
           drgValue: assignment.answerKey?.drgValue || "",
           modifiers: assignment.answerKey?.modifiers || [],
           notes: assignment.answerKey?.notes || "",
-          adx: assignment.answerKey?.adx || "", // NEW
+          adx: assignment.answerKey?.adx || "",
           dynamicQuestions: assignment.dynamicQuestions || []
         },
 
@@ -301,6 +316,9 @@ exports.getStudentAssignmentSummary = async (req, res) => {
     return res.json({
       studentId,
       assignmentId,
+      timeLimitMinutes: assignment.timeLimitMinutes ?? null,
+      startedAt: submission.startedAt || null,
+      mustSubmitBy: submission.mustSubmitBy || null,
       totalCorrect: submission.totalCorrect,
       totalWrong: submission.totalWrong,
       overallProgress: submission.overallProgress,
@@ -342,11 +360,10 @@ exports.getSubmittedParentAssignments = async (req, res) => {
       return res.status(400).json({ error: "Missing studentId" });
     }
 
-    // Fetch submissions and populate parent assignment (moduleName + subAssignments)
     const submissions = await Submission.find({ studentId })
       .populate({
         path: "assignmentId",
-        select: "moduleName subAssignments"
+        select: "moduleName subAssignments timeLimitMinutes"
       })
       .lean();
 
@@ -354,13 +371,10 @@ exports.getSubmittedParentAssignments = async (req, res) => {
       return res.json({ assignments: [] });
     }
 
-    // Build response
     const result = submissions.map(sub => {
-      // Parent completed if there are any submitted answers at parent level
       const parentCompleted = Array.isArray(sub.submittedAnswers) &&
         sub.submittedAnswers.some(sa => !sa.subAssignmentId);
 
-      // Check each sub-assignment completion
       const subAssignments = (sub.assignmentId?.subAssignments || []).map(sa => {
         const submitted = sub.submittedAnswers?.some(ans =>
           ans.subAssignmentId?.toString() === sa._id.toString()
@@ -372,9 +386,6 @@ exports.getSubmittedParentAssignments = async (req, res) => {
         };
       });
 
-      // Parent assignment is complete if:
-      // - All sub-assignments are completed (when there are sub-assignments), OR
-      // - The parent itself has been submitted (when there are no sub-assignments)
       const isParentCompleted =
         subAssignments.length > 0
           ? subAssignments.every(sa => sa.isCompleted)
@@ -383,6 +394,9 @@ exports.getSubmittedParentAssignments = async (req, res) => {
       return {
         assignmentId: sub.assignmentId?._id,
         assignmentName: sub.assignmentId?.moduleName,
+        timeLimitMinutes: sub.assignmentId?.timeLimitMinutes ?? null,
+        startedAt: sub.startedAt || null,
+        mustSubmitBy: sub.mustSubmitBy || null,
         isCompleted: isParentCompleted,
         subAssignments,
       };
@@ -395,6 +409,7 @@ exports.getSubmittedParentAssignments = async (req, res) => {
   }
 };
 
+
 /* ---------------------------------------------------------------------- *
  *  GET /submission/:submissionId  (full detail with keys & submissions)  *
  * ---------------------------------------------------------------------- */
@@ -402,7 +417,6 @@ exports.getSubmissionDetails = async (req, res) => {
   try {
     const { submissionId } = req.params;
 
-    // Find the submission with populated assignment data
     const submission = await Submission.findById(submissionId)
       .populate({
         path: 'assignmentId',
@@ -418,13 +432,15 @@ exports.getSubmissionDetails = async (req, res) => {
       return res.status(404).json({ error: "Assignment not found" });
     }
 
-    // Prepare the response structure
     const result = {
       submissionId: submission._id,
       studentId: submission.studentId,
-      assignmentId: submission.assignmentId._id,
+      assignmentId: assignment._id,
       moduleName: assignment.moduleName,
       category: assignment.category,
+      timeLimitMinutes: assignment.timeLimitMinutes ?? null,
+      startedAt: submission.startedAt || null,
+      mustSubmitBy: submission.mustSubmitBy || null,
       overallProgress: submission.overallProgress,
       totalCorrect: submission.totalCorrect,
       totalWrong: submission.totalWrong,
@@ -432,7 +448,7 @@ exports.getSubmissionDetails = async (req, res) => {
       assignments: []
     };
 
-    // Process parent assignment (if it has answers)
+    // Parent (if it has answers)
     if (assignment.answerKey || assignment.dynamicQuestions?.length > 0) {
       const parentSubmission = submission.submittedAnswers.find(
         ans => ans.subAssignmentId === null
@@ -454,7 +470,7 @@ exports.getSubmissionDetails = async (req, res) => {
           drgValue: assignment.answerKey?.drgValue || null,
           modifiers: assignment.answerKey?.modifiers || [],
           notes: assignment.answerKey?.notes || null,
-          adx: assignment.answerKey?.adx || null, // NEW
+          adx: assignment.answerKey?.adx || null,
           dynamicQuestions: assignment.dynamicQuestions?.map(q => ({
             questionText: q.questionText,
             type: q.type || "dynamic",
@@ -465,7 +481,7 @@ exports.getSubmissionDetails = async (req, res) => {
       });
     }
 
-    // Process sub-assignments
+    // Subs
     for (const subAssignment of assignment.subAssignments) {
       const subSubmission = submission.submittedAnswers.find(
         ans => ans.subAssignmentId &&
@@ -488,7 +504,7 @@ exports.getSubmissionDetails = async (req, res) => {
           drgValue: subAssignment.answerKey?.drgValue || null,
           modifiers: subAssignment.answerKey?.modifiers || [],
           notes: subAssignment.answerKey?.notes || null,
-          adx: subAssignment.answerKey?.adx || null, // NEW
+          adx: subAssignment.answerKey?.adx || null,
           dynamicQuestions: subAssignment.dynamicQuestions?.map(q => ({
             questionText: q.questionText,
             type: q.type || "dynamic",
