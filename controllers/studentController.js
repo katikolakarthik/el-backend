@@ -162,20 +162,32 @@ exports.getStudents = async (req, res) => {
 
 
 
-// Delete Student (still works normally)
+
 exports.deleteStudent = async (req, res) => {
+  const { id } = req.params;
+  const session = await mongoose.startSession();
+
   try {
-    await Student.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: "Student deleted" });
+    await session.withTransaction(async () => {
+      // 1) Delete all submissions of this student
+      await Submission.deleteMany({ studentId: id }).session(session);
+
+      // 2) Delete the student
+      await Student.findByIdAndDelete(id).session(session);
+    });
+
+    res.json({ success: true, message: "Student and submissions deleted" });
   } catch (error) {
-    res.status(500).json({ error: "Failed to delete student" });
+    console.error("Delete student error:", error);
+    res.status(500).json({ error: "Failed to delete student and submissions" });
+  } finally {
+    session.endSession();
   }
 };
 
-exports.deleteStudent = async (req, res) => {
-  await Student.findByIdAndDelete(req.params.id);
-  res.json({ success: true, message: "Student deleted" });
-};
+
+
+
 
 
 // Add Admin user (similar to addStudent but role: "admin")
